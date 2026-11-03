@@ -22,9 +22,9 @@ from datetime import datetime
 from typing import Optional, Dict, Any, List, Tuple
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 
 # Ensure backend folder is on python path
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -41,6 +41,7 @@ from services.option_chain_service import router as option_chain_router
 from services.day_trader_nse import router as day_trader_router
 from services.paper_oms import router as paper_oms_router, paper_engine
 from services.backtester import router as backtester_router
+from services.copy_trading_engine import router as copy_trading_router
 
 # Configure logging
 logging.basicConfig(
@@ -500,6 +501,7 @@ app.include_router(option_chain_router)
 app.include_router(day_trader_router)
 app.include_router(paper_oms_router)
 app.include_router(backtester_router)
+app.include_router(copy_trading_router)
 
 
 @app.post("/api/feed/subscribe", tags=["Market Feed"])
@@ -546,18 +548,29 @@ async def websocket_stream_endpoint(websocket: WebSocket):
 
 
 # ==========================================================
-# Root & Health Endpoints
+# Root & Terminal Endpoints
 # ==========================================================
+TERMINAL_HTML_PATH = os.path.join(CURRENT_DIR, "templates", "terminal.html")
+
 @app.get("/", tags=["General"])
-def root():
+def root(request: Request, format: Optional[str] = Query(default=None)):
+    """Serves the TRADEx-ALGO Live Terminal to web browsers, or JSON to API clients."""
+    accept_header = request.headers.get("accept", "")
+    if format != "json" and ("text/html" in accept_header or "*/*" in accept_header):
+        if os.path.exists(TERMINAL_HTML_PATH):
+            with open(TERMINAL_HTML_PATH, "r", encoding="utf-8") as f:
+                return HTMLResponse(content=f.read())
     return {
         "name": "Indian Algo Trader Backend",
         "version": "2.0.0",
         "status": "online",
         "market": "National Stock Exchange (NSE) & Bombay Stock Exchange (BSE) of India",
         "docs_url": "/docs",
-        "redoc_url": "/redoc",
+        "terminal_url": "/terminal",
         "endpoints": {
+            "copy_trade_status": "/api/copy-trade/status",
+            "copy_trade_execute": "/api/copy-trade/execute",
+            "copy_trade_flatten_all": "/api/copy-trade/flatten-all",
             "option_chain": "/api/option-chain?symbol=NIFTY&expiry=nearest",
             "stock_search": "/api/market/search?q=RELIANCE",
             "stock_detail": "/api/market/stock?symbol=RELIANCE",
@@ -573,6 +586,20 @@ def root():
             "health": "/health",
         },
     }
+
+
+@app.get("/terminal", response_class=HTMLResponse, tags=["General"])
+def terminal_page():
+    """Serves the rich interactive TRADEx-ALGO Live Terminal & Copy Trader."""
+    if os.path.exists(TERMINAL_HTML_PATH):
+        with open(TERMINAL_HTML_PATH, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    return HTMLResponse("<h1>Terminal HTML not found</h1>", status_code=404)
+
+
+@app.get("/api", tags=["General"])
+def api_endpoints_schema():
+    return root(Request({"type": "http", "headers": []}), format="json")
 
 
 @app.get("/health", tags=["General"])

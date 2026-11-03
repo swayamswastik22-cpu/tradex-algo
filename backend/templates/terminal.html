@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TRADEx-ALGO | NSE Live Algorithmic Terminal & Copy Trader</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    @keyframes pulse-fast { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .animate-pulse-fast { animation: pulse-fast 1s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+    .ticker-scroll { display: flex; width: max-content; animation: marquee 35s linear infinite; }
+    .ticker-scroll:hover { animation-play-state: paused; }
+    @keyframes marquee { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+  </style>
+</head>
+<body class="bg-neutral-950 text-neutral-100 font-sans min-h-screen flex flex-col antialiased selection:bg-emerald-500 selection:text-neutral-950">
+
+  <!-- 1. Top Navbar -->
+  <header class="bg-neutral-900/95 border-b border-neutral-800 px-4 lg:px-8 py-3 sticky top-0 z-50 backdrop-blur-md flex flex-wrap items-center justify-between gap-3">
+    <div class="flex items-center gap-3">
+      <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center font-black text-neutral-950 font-mono text-lg shadow-lg shadow-emerald-500/20">
+        TX
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="text-lg font-black tracking-tight bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 bg-clip-text text-transparent">
+            TRADEx-ALGO
+          </span>
+          <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono">
+            LIVE v2.0
+          </span>
+        </div>
+        <div class="text-[10px] text-neutral-400 font-mono">NSE / BSE ALGORITHMIC COPY-TRADER</div>
+      </div>
+    </div>
+
+    <!-- Feed & Clock -->
+    <div class="flex items-center gap-4 text-xs font-mono">
+      <div class="hidden sm:flex items-center gap-2 bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-1.5">
+        <span id="feed-dot" class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
+        <span id="feed-status" class="text-neutral-300 font-semibold">Angel One Feed</span>
+        <span class="text-neutral-600">|</span>
+        <span class="text-cyan-400" id="ticks-count">0 ticks</span>
+      </div>
+      <div class="bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-1.5 text-neutral-300 font-semibold flex items-center gap-2">
+        <i data-lucide="clock" class="w-3.5 h-3.5 text-emerald-400"></i>
+        <span id="ist-clock">--:--:-- IST</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- 2. Live Marquee Ticker Bar -->
+  <div class="bg-neutral-900/60 border-b border-neutral-800/80 overflow-hidden py-1.5 text-xs font-mono select-none">
+    <div id="ticker-container" class="ticker-scroll flex gap-6 text-neutral-300">
+      <span class="text-neutral-500">Loading live NSE ticker bar...</span>
+    </div>
+  </div>
+
+  <!-- Main Container -->
+  <main class="flex-1 max-w-[1700px] w-full mx-auto p-4 lg:p-6 space-y-6">
+
+    <!-- 3. Top Metrics & Auto-Copy Controls -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <!-- Nifty 50 Card -->
+      <div class="p-4 rounded-2xl bg-neutral-900/70 border border-neutral-800 hover:border-neutral-700 transition">
+        <div class="flex justify-between items-center text-xs text-neutral-400 font-mono">
+          <span>NIFTY 50</span>
+          <span class="px-1.5 py-0.5 rounded text-[10px] bg-cyan-950 text-cyan-300 border border-cyan-800">BENCHMARK</span>
+        </div>
+        <div id="nifty-ltp" class="text-2xl font-black font-mono text-neutral-100 mt-2">₹23,810.85</div>
+        <div id="nifty-chg" class="text-xs font-mono font-bold mt-1 text-emerald-400">+₹124.50 (+0.52%)</div>
+      </div>
+
+      <!-- Bank Nifty Card -->
+      <div class="p-4 rounded-2xl bg-neutral-900/70 border border-neutral-800 hover:border-neutral-700 transition">
+        <div class="flex justify-between items-center text-xs text-neutral-400 font-mono">
+          <span>BANK NIFTY</span>
+          <span class="px-1.5 py-0.5 rounded text-[10px] bg-purple-950 text-purple-300 border border-purple-800">BANKING</span>
+        </div>
+        <div id="banknifty-ltp" class="text-2xl font-black font-mono text-neutral-100 mt-2">₹55,540.05</div>
+        <div id="banknifty-chg" class="text-xs font-mono font-bold mt-1 text-emerald-400">+₹280.20 (+0.51%)</div>
+      </div>
+
+      <!-- Virtual Wallet & Capital -->
+      <div class="p-4 rounded-2xl bg-neutral-900/70 border border-neutral-800 hover:border-neutral-700 transition">
+        <div class="flex justify-between items-center text-xs text-neutral-400 font-mono">
+          <span>VIRTUAL PORTFOLIO</span>
+          <span class="px-1.5 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-800">100% VIRTUAL</span>
+        </div>
+        <div id="portfolio-value" class="text-2xl font-black font-mono text-neutral-100 mt-2">₹10,00,000.00</div>
+        <div id="portfolio-pnl" class="text-xs font-mono font-bold mt-1 text-neutral-400">P&L: ₹0.00 (0.00%)</div>
+      </div>
+
+      <!-- Copy Trading Master Controls -->
+      <div class="p-4 rounded-2xl bg-gradient-to-br from-neutral-900 to-neutral-900/90 border border-emerald-500/40 relative overflow-hidden flex flex-col justify-between">
+        <div class="flex justify-between items-center">
+          <div class="flex items-center gap-1.5 text-xs font-bold text-neutral-200">
+            <i data-lucide="bot" class="w-4 h-4 text-emerald-400"></i>
+            <span>AUTO-COPY ENGINE</span>
+          </div>
+          <!-- Toggle Switch -->
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" id="auto-copy-toggle" class="sr-only peer">
+            <div class="w-11 h-6 bg-neutral-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+          </label>
+        </div>
+        <div class="mt-2 text-[11px] text-neutral-400 font-mono" id="auto-copy-status-desc">
+          Status: <b class="text-rose-400">OFFLINE</b> • Watching 218 FNO setups
+        </div>
+        <div class="mt-3 flex items-center justify-between gap-2 pt-2 border-t border-neutral-800/80">
+          <span class="text-[10px] text-neutral-500 font-mono">FLAT BY 15:20 IST</span>
+          <button onclick="flattenAllPositions()" class="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30 transition flex items-center gap-1 font-mono">
+            <i data-lucide="alert-octagon" class="w-3 h-3 text-rose-400"></i> Flatten All
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. Main Two-Column Layout -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+      <!-- LEFT: Live Scanners & 1-Click Copy Trades (7 cols) -->
+      <section class="lg:col-span-7 bg-neutral-900/60 border border-neutral-800 rounded-2xl p-5 flex flex-col space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-neutral-800">
+          <div>
+            <h2 class="text-base font-extrabold text-neutral-100 flex items-center gap-2">
+              <i data-lucide="radar" class="w-5 h-5 text-emerald-400"></i>
+              Live Breakout Signals (218 FNO Stocks)
+            </h2>
+            <p class="text-xs text-neutral-400 mt-0.5">
+              15-min Opening Range Breakouts & 20D momentum with auto-calculated SL and Targets.
+            </p>
+          </div>
+          <div class="flex items-center gap-2">
+            <input type="text" id="symbol-search" placeholder="Filter stock..." oninput="filterScannerTable()" class="bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-1.5 text-xs font-mono text-neutral-200 focus:outline-none focus:border-emerald-500 w-32 sm:w-40" />
+            <button onclick="refreshScanner()" class="p-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-lg transition" title="Refresh scanner">
+              <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Scanner Table -->
+        <div class="overflow-x-auto flex-1 max-h-[620px] overflow-y-auto">
+          <table class="w-full text-left text-xs font-mono">
+            <thead class="sticky top-0 bg-neutral-900 border-b border-neutral-800 text-neutral-400 z-10">
+              <tr>
+                <th class="py-2.5 px-2">Symbol</th>
+                <th class="py-2.5 px-2">LTP</th>
+                <th class="py-2.5 px-2">%Chg</th>
+                <th class="py-2.5 px-2">Breakout Status</th>
+                <th class="py-2.5 px-2">Stop Loss</th>
+                <th class="py-2.5 px-2">Target (1.5R)</th>
+                <th class="py-2.5 px-2">Expiry</th>
+                <th class="py-2.5 px-2 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody id="scanner-tbody" class="divide-y divide-neutral-800/40">
+              <tr>
+                <td colspan="8" class="text-center py-12 text-neutral-500">
+                  <i data-lucide="loader" class="w-5 h-5 animate-spin mx-auto mb-2 text-emerald-400"></i>
+                  Scanning 218 FNO stocks against live ticks...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- RIGHT: Active Positions, Chart, Option Chain (5 cols) -->
+      <section class="lg:col-span-5 flex flex-col space-y-6">
+
+        <!-- Active Positions Card -->
+        <div class="bg-neutral-900/60 border border-neutral-800 rounded-2xl p-5 flex flex-col">
+          <div class="flex items-center justify-between pb-3 mb-3 border-b border-neutral-800">
+            <div class="flex items-center gap-2">
+              <i data-lucide="briefcase" class="w-4 h-4 text-cyan-400"></i>
+              <h3 class="text-sm font-bold text-neutral-100">
+                Active Copied Trades (<span id="open-positions-count">0</span>)
+              </h3>
+            </div>
+            <span class="text-[10px] px-2 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-800">
+              Auto-Trailing SL & Target
+            </span>
+          </div>
+
+          <!-- Positions List -->
+          <div id="positions-container" class="space-y-3 max-h-[260px] overflow-y-auto">
+            <div class="p-6 text-center text-xs text-neutral-500 border border-dashed border-neutral-800 rounded-xl">
+              No active copy trades open. Click <b class="text-emerald-400">"⚡ Copy"</b> on any signal to execute!
+            </div>
+          </div>
+        </div>
+
+        <!-- Candlestick Mini-Chart Card -->
+        <div class="bg-neutral-900/60 border border-neutral-800 rounded-2xl p-5 flex flex-col flex-1">
+          <div class="flex items-center justify-between pb-3 mb-3 border-b border-neutral-800">
+            <div class="flex items-center gap-2">
+              <i data-lucide="line-chart" class="w-4 h-4 text-emerald-400"></i>
+              <span id="chart-active-symbol" class="text-sm font-bold text-neutral-100">RELIANCE</span>
+              <span class="text-[10px] text-neutral-400 font-mono">Candlestick Chart</span>
+            </div>
+            <!-- Timeframe Selector -->
+            <div class="flex items-center gap-1 bg-neutral-950 p-1 rounded-lg border border-neutral-800 text-[11px] font-mono">
+              <button onclick="setChartInterval('1m')" class="px-2 py-0.5 rounded tf-btn hover:text-white" data-tf="1m">1m</button>
+              <button onclick="setChartInterval('3m')" class="px-2 py-0.5 rounded tf-btn hover:text-white" data-tf="3m">3m</button>
+              <button onclick="setChartInterval('5m')" class="px-2 py-0.5 rounded tf-btn bg-emerald-500 text-neutral-950 font-bold" data-tf="5m">5m</button>
+              <button onclick="setChartInterval('15m')" class="px-2 py-0.5 rounded tf-btn hover:text-white" data-tf="15m">15m</button>
+              <button onclick="setChartInterval('1d')" class="px-2 py-0.5 rounded tf-btn hover:text-white" data-tf="1d">1D</button>
+            </div>
+          </div>
+
+          <!-- Chart Visual Canvas/Bars -->
+          <div id="chart-viewport" class="flex-1 min-h-[220px] bg-neutral-950 rounded-xl p-3 flex flex-col justify-between border border-neutral-800/80 font-mono text-[11px]">
+            <div class="flex justify-between text-neutral-400">
+              <span id="chart-ohlc">O: -- H: -- L: -- C: --</span>
+              <span id="chart-candle-count" class="text-cyan-400">Loading candles...</span>
+            </div>
+            <!-- Canvas container -->
+            <div id="candle-render-area" class="flex-1 flex items-end gap-1 overflow-hidden py-2"></div>
+            <div class="flex justify-between text-neutral-500 text-[10px] pt-1 border-t border-neutral-900">
+              <span>09:15</span>
+              <span>11:30</span>
+              <span>13:30</span>
+              <span>15:30</span>
+            </div>
+          </div>
+        </div>
+
+      </section>
+    </div>
+  </main>
+
+  <!-- 5. Toast Notification Banner -->
+  <div id="toast" class="fixed bottom-5 right-5 z-50 transform translate-y-24 opacity-0 transition-all duration-300 bg-neutral-900 border border-emerald-500/80 rounded-xl p-4 shadow-2xl shadow-emerald-500/20 max-w-sm flex items-start gap-3">
+    <div id="toast-icon" class="text-emerald-400 font-bold">⚡</div>
+    <div>
+      <div id="toast-title" class="text-xs font-bold text-neutral-100">Trade Copied</div>
+      <div id="toast-desc" class="text-[11px] text-neutral-400 mt-0.5">Order executed successfully into Virtual Paper OMS.</div>
+    </div>
+  </div>
+
+  <script>
+    // State
+    let activeSymbol = "RELIANCE";
+    let activeInterval = "5m";
+    let allScannerData = [];
+    let ticksStreamed = 0;
+
+    // Toast helper
+    function showToast(title, desc, isError = false) {
+      const toast = document.getElementById("toast");
+      const tTitle = document.getElementById("toast-title");
+      const tDesc = document.getElementById("toast-desc");
+      tTitle.innerText = title;
+      tDesc.innerText = desc;
+      toast.className = `fixed bottom-5 right-5 z-50 transition-all duration-300 rounded-xl p-4 shadow-2xl max-w-sm flex items-start gap-3 border ${
+        isError ? "bg-neutral-900 border-rose-500 text-rose-300" : "bg-neutral-900 border-emerald-500 text-emerald-300"
+      }`;
+      toast.classList.remove("translate-y-24", "opacity-0");
+      setTimeout(() => {
+        toast.classList.add("translate-y-24", "opacity-0");
+      }, 4000);
+    }
+
+    // IST Clock
+    function updateClock() {
+      const now = new Date();
+      const options = { timeZone: "Asia/Kolkata", hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" };
+      document.getElementById("ist-clock").innerText = now.toLocaleTimeString("en-GB", options) + " IST";
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // 1. Fetch System State & Prices
+    async function fetchSystemState() {
+      try {
+        const res = await fetch("/api/state");
+        if (!res.ok) return;
+        const data = await res.json();
+
+        // Update Ticker Bar
+        if (data.ticker_data) {
+          const tickerArr = Object.values(data.ticker_data).slice(0, 30);
+          const html = tickerArr.map(t => {
+            const isUp = t.change >= 0;
+            return `<div onclick="selectSymbol('${t.symbol}')" class="cursor-pointer hover:text-white transition flex items-center gap-1.5">
+              <b class="text-neutral-200">${t.symbol}</b>
+              <span class="${isUp ? 'text-emerald-400' : 'text-rose-400'}">₹${t.ltp.toFixed(2)} (${isUp ? '+' : ''}${t.change_pct.toFixed(2)}%)</span>
+            </div>`;
+          }).join("");
+          document.getElementById("ticker-container").innerHTML = html + html; // duplicate for smooth marquee loop
+        }
+
+        // Ticks count
+        if (data.feed) {
+          ticksStreamed = data.feed.ticks_streamed || 0;
+          document.getElementById("ticks-count").innerText = `${ticksStreamed.toLocaleString()} ticks`;
+        }
+
+        // Benchmark Indices
+        if (data.ticker_data && data.ticker_data["NIFTY"]) {
+          const n = data.ticker_data["NIFTY"];
+          document.getElementById("nifty-ltp").innerText = `₹${n.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
+          document.getElementById("nifty-chg").innerHTML = `<span class="${n.change >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${n.change >= 0 ? '+' : ''}₹${n.change.toFixed(2)} (${n.change >= 0 ? '+' : ''}${n.change_pct.toFixed(2)}%)</span>`;
+        }
+        if (data.ticker_data && data.ticker_data["BANKNIFTY"]) {
+          const b = data.ticker_data["BANKNIFTY"];
+          document.getElementById("banknifty-ltp").innerText = `₹${b.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
+          document.getElementById("banknifty-chg").innerHTML = `<span class="${b.change >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${b.change >= 0 ? '+' : ''}₹${b.change.toFixed(2)} (${b.change >= 0 ? '+' : ''}${b.change_pct.toFixed(2)}%)</span>`;
+        }
+
+        // Portfolio
+        if (data.paper_oms && data.paper_oms.portfolio) {
+          const p = data.paper_oms.portfolio;
+          document.getElementById("portfolio-value").innerText = `₹${p.current_portfolio_value.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
+          const isUp = p.total_pnl >= 0;
+          document.getElementById("portfolio-pnl").innerHTML = `<span class="${isUp ? 'text-emerald-400' : 'text-rose-400'} font-bold">P&L: ${isUp ? '+' : ''}₹${p.total_pnl.toFixed(2)}</span> (Available: ₹${p.virtual_cash_balance.toLocaleString("en-IN")})`;
+        }
+      } catch (e) {
+        console.warn("State poll error:", e);
+      }
+    }
+
+    // 2. Fetch Scanner Signals
+    async function refreshScanner() {
+      try {
+        const res = await fetch("/api/trader/scanner?strategy=orb");
+        if (!res.ok) return;
+        const data = await res.json();
+        allScannerData = data.results || [];
+        renderScannerTable(allScannerData);
+      } catch (e) {
+        console.warn("Scanner error:", e);
+      }
+    }
+
+    function renderScannerTable(items) {
+      const tbody = document.getElementById("scanner-tbody");
+      if (!items || items.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" class="text-center py-8 text-neutral-500">No stocks matching filter.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = items.map(s => {
+        const isTriggered = s.status === "triggered";
+        const isInProgress = s.status === "breakout_in_progress";
+        const statusBadge = isTriggered
+          ? `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500 text-neutral-950 animate-pulse">TRIGGERED 🚀</span>`
+          : (isInProgress
+            ? `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-800">IN PROGRESS ⏳</span>`
+            : `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-neutral-800 text-neutral-400">WAITING</span>`);
+
+        const isUp = s.percent_change >= 0;
+
+        return `<tr class="hover:bg-neutral-850 cursor-pointer transition ${activeSymbol === s.symbol ? 'bg-neutral-800/40' : ''}" onclick="selectSymbol('${s.symbol}')">
+          <td class="py-3 px-2 font-bold text-neutral-100 flex items-center gap-1.5">
+            <span>${s.symbol}</span>
+            ${activeSymbol === s.symbol ? '<span class="text-[9px] px-1 rounded bg-emerald-400 text-neutral-950 font-bold">VIEW</span>' : ''}
+          </td>
+          <td class="py-3 px-2 font-bold text-neutral-100">₹${s.current_price.toFixed(2)}</td>
+          <td class="py-3 px-2 font-bold ${isUp ? 'text-emerald-400' : 'text-rose-400'}">${isUp ? '+' : ''}${s.percent_change.toFixed(2)}%</td>
+          <td class="py-3 px-2">${statusBadge}</td>
+          <td class="py-3 px-2 text-rose-400">₹${s.stop_loss ? s.stop_loss.toFixed(2) : '--'}</td>
+          <td class="py-3 px-2 text-emerald-400">₹${s.target_1 ? s.target_1.toFixed(2) : '--'}</td>
+          <td class="py-3 px-2 text-neutral-400 text-[11px]">${s.expiry || '--'}</td>
+          <td class="py-3 px-2 text-right">
+            <button onclick="event.stopPropagation(); executeCopy('${s.symbol}', ${s.current_price}, ${s.stop_loss}, ${s.target_1}, ${s.target_2 || s.target_1})" class="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500 hover:text-neutral-950 transition flex items-center gap-1 ml-auto font-mono">
+              <i data-lucide="zap" class="w-3 h-3"></i> Copy
+            </button>
+          </td>
+        </tr>`;
+      }).join("");
+      lucide.createIcons();
+    }
+
+    function filterScannerTable() {
+      const q = document.getElementById("symbol-search").value.trim().toUpperCase();
+      if (!q) {
+        renderScannerTable(allScannerData);
+      } else {
+        const filtered = allScannerData.filter(s => s.symbol.includes(q));
+        renderScannerTable(filtered);
+      }
+    }
+
+    // 3. 1-Click Copy Execution
+    async function executeCopy(symbol, entry, sl, t1, t2) {
+      try {
+        const res = await fetch("/api/copy-trade/execute", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            symbol: symbol,
+            side: "BUY",
+            entry_price: entry,
+            stop_loss: sl,
+            target_1: t1,
+            target_2: t2,
+          }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast("Trade Copied! ⚡", `Copied ${data.trade.quantity} shares of ${symbol} @ ₹${entry} (SL: ₹${sl}, Target: ₹${t1})`);
+          fetchPositions();
+          fetchSystemState();
+        } else {
+          showToast("Execution Error", data.detail || "Failed to copy trade.", true);
+        }
+      } catch (e) {
+        showToast("Network Error", "Could not reach Copy Trading engine.", true);
+      }
+    }
+
+    // 4. Fetch Active Positions
+    async function fetchPositions() {
+      try {
+        const res = await fetch("/api/paper/positions?status=OPEN");
+        if (!res.ok) return;
+        const data = await res.json();
+        const positions = data.positions || [];
+        document.getElementById("open-positions-count").innerText = positions.length;
+
+        const container = document.getElementById("positions-container");
+        if (positions.length === 0) {
+          container.innerHTML = `<div class="p-6 text-center text-xs text-neutral-500 border border-dashed border-neutral-800 rounded-xl">
+            No active copy trades open. Click <b class="text-emerald-400">"⚡ Copy"</b> on any signal to execute!
+          </div>`;
+          return;
+        }
+
+        container.innerHTML = positions.map(p => {
+          const isPnlUp = p.pnl >= 0;
+          return `<div class="p-3 bg-neutral-900 border border-neutral-800 rounded-xl font-mono text-xs flex flex-col gap-1.5">
+            <div class="flex justify-between items-center">
+              <span class="font-extrabold text-neutral-100 flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                ${p.symbol}
+              </span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded font-bold bg-neutral-800 text-neutral-300">
+                ${p.side} ${p.quantity} Qty
+              </span>
+            </div>
+            <div class="flex justify-between text-[11px] text-neutral-400">
+              <span>Entry: ₹${p.entry_price}</span>
+              <span>LTP: <b class="text-neutral-200">₹${p.current_ltp || p.entry_price}</b></span>
+            </div>
+            <div class="flex justify-between text-[11px] pt-1.5 border-t border-neutral-800/80 items-center">
+              <div>
+                <span class="text-neutral-500">SL: ₹${p.stop_loss}</span>
+                <span class="text-neutral-600"> | </span>
+                <span class="text-neutral-500">Tgt: ₹${p.target_1}</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="font-bold ${isPnlUp ? 'text-emerald-400' : 'text-rose-400'}">
+                  ${isPnlUp ? '+' : ''}₹${p.pnl.toFixed(2)} (${p.pnl_percent.toFixed(2)}%)
+                </span>
+                <button onclick="closeTrade('${p.id}')" class="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 transition border border-rose-500/40">
+                  Exit
+                </button>
+              </div>
+            </div>
+          </div>`;
+        }).join("");
+      } catch (e) {
+        console.warn("Positions error:", e);
+      }
+    }
+
+    // 5. Close Trade & Flatten All
+    async function closeTrade(tradeId) {
+      try {
+        const res = await fetch(`/api/paper/close/${tradeId}`, { method: "POST" });
+        if (res.ok) {
+          showToast("Position Closed", "Trade squared off successfully.");
+          fetchPositions();
+          fetchSystemState();
+        }
+      } catch (e) {
+        showToast("Error", "Could not close position.", true);
+      }
+    }
+
+    async function flattenAllPositions() {
+      if (!confirm("Are you sure you want to Flatten All open positions immediately?")) return;
+      try {
+        const res = await fetch("/api/copy-trade/flatten-all", { method: "POST" });
+        const data = await res.json();
+        showToast("Flatten All Complete", data.message || "All open positions squared off.");
+        fetchPositions();
+        fetchSystemState();
+      } catch (e) {
+        showToast("Error", "Failed to flatten positions.", true);
+      }
+    }
+
+    // 6. Auto-Copy Toggle
+    const autoCopyInput = document.getElementById("auto-copy-toggle");
+    autoCopyInput.addEventListener("change", async (e) => {
+      const enabled = e.target.checked;
+      try {
+        const res = await fetch("/api/copy-trade/toggle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: enabled, max_trades_per_day: 5, risk_per_trade_pct: 1.0 }),
+        });
+        const data = await res.json();
+        document.getElementById("auto-copy-status-desc").innerHTML = enabled
+          ? `Status: <b class="text-emerald-400">ACTIVE 🟢</b> • Auto-executing ORB breakouts`
+          : `Status: <b class="text-rose-400">OFFLINE 🔴</b> • Watching 218 FNO setups`;
+        showToast(enabled ? "Auto-Copy Enabled 🟢" : "Auto-Copy Disabled 🔴", data.message);
+      } catch (err) {
+        e.target.checked = !enabled;
+        showToast("Toggle Error", "Could not update Auto-Copy status.", true);
+      }
+    });
+
+    // 7. Candlestick Chart Viewport
+    function selectSymbol(sym) {
+      activeSymbol = sym;
+      document.getElementById("chart-active-symbol").innerText = sym;
+      fetchCandles();
+      renderScannerTable(allScannerData);
+    }
+
+    function setChartInterval(tf) {
+      activeInterval = tf;
+      document.querySelectorAll(".tf-btn").forEach(btn => {
+        if (btn.getAttribute("data-tf") === tf) {
+          btn.className = "px-2 py-0.5 rounded tf-btn bg-emerald-500 text-neutral-950 font-bold";
+        } else {
+          btn.className = "px-2 py-0.5 rounded tf-btn hover:text-white";
+        }
+      });
+      fetchCandles();
+    }
+
+    async function fetchCandles() {
+      try {
+        const res = await fetch(`/api/market/candles?symbol=${activeSymbol}&interval=${activeInterval}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const candles = data.candles || [];
+        document.getElementById("chart-candle-count").innerText = `${candles.length} bars (${activeInterval})`;
+
+        if (candles.length > 0) {
+          const last = candles[candles.length - 1];
+          document.getElementById("chart-ohlc").innerText = `O: ₹${last.open} H: ₹${last.high} L: ₹${last.low} C: ₹${last.close}`;
+          renderCandleBars(candles.slice(-40));
+        }
+      } catch (e) {
+        console.warn("Candle error:", e);
+      }
+    }
+
+    function renderCandleBars(bars) {
+      const area = document.getElementById("candle-render-area");
+      if (!bars || bars.length === 0) return;
+      const minP = Math.min(...bars.map(b => b.low));
+      const maxP = Math.max(...bars.map(b => b.high));
+      const range = maxP - minP || 1;
+
+      area.innerHTML = bars.map(b => {
+        const isGreen = b.close >= b.open;
+        const bodyTop = Math.max(b.open, b.close);
+        const bodyBottom = Math.min(b.open, b.close);
+        const heightPct = Math.max(4, Math.round(((bodyTop - bodyBottom) / range) * 100));
+        const bottomPct = Math.round(((bodyBottom - minP) / range) * 100);
+
+        return `<div class="flex-1 flex flex-col items-center justify-end h-full group relative cursor-pointer" title="Time: ${b.time_str} | Close: ₹${b.close}">
+          <div class="w-full rounded-sm ${isGreen ? 'bg-emerald-400' : 'bg-rose-400'}" style="height: ${heightPct}%; margin-bottom: ${bottomPct}%;"></div>
+        </div>`;
+      }).join("");
+    }
+
+    // 8. WebSocket Stream
+    function initWebSocket() {
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const wsUrl = `${protocol}//${window.location.host}/ws/stream`;
+      const ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        document.getElementById("feed-dot").className = "w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping";
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === "tick_broadcast") {
+            ticksStreamed = data.ticks_streamed || (ticksStreamed + 1);
+            document.getElementById("ticks-count").innerText = `${ticksStreamed.toLocaleString()} ticks`;
+          }
+        } catch (e) {}
+      };
+
+      ws.onclose = () => {
+        document.getElementById("feed-dot").className = "w-2.5 h-2.5 rounded-full bg-amber-400";
+        setTimeout(initWebSocket, 3000);
+      };
+    }
+
+    // Initial Load & Poll Timers
+    window.addEventListener("DOMContentLoaded", () => {
+      lucide.createIcons();
+      fetchSystemState();
+      refreshScanner();
+      fetchPositions();
+      fetchCandles();
+      initWebSocket();
+
+      setInterval(fetchSystemState, 2000);
+      setInterval(refreshScanner, 3000);
+      setInterval(fetchPositions, 2000);
+      setInterval(fetchCandles, 5000);
+    });
+  </script>
+</body>
+</html>
