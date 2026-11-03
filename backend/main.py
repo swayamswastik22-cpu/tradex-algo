@@ -17,11 +17,12 @@ import requests
 import random
 import logging
 import threading
+import asyncio
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Tuple
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -388,15 +389,55 @@ class AngelOneWebSocketManager:
 feed_manager = AngelOneWebSocketManager()
 
 
+# Active WebSocket connections to /ws/stream
+ACTIVE_WS_CLIENTS: List[WebSocket] = []
+
+
+async def broadcast_ws_loop():
+    """Broadcasts real-time prices to all active /ws/stream clients every 500ms."""
+    while True:
+        try:
+            await asyncio.sleep(0.5)
+            if not ACTIVE_WS_CLIENTS:
+                continue
+
+            payload = json.dumps({
+                "type": "tick_stream",
+                "timestamp": datetime.now().isoformat(),
+                "live_prices": feed_manager.latest_prices,
+                "ticks_count": feed_manager.ticks_count,
+                "mode": feed_manager.mode,
+                "status": "connected"
+            })
+
+            dead_clients = []
+            for client in ACTIVE_WS_CLIENTS:
+                try:
+                    await client.send_text(payload)
+                except Exception:
+                    dead_clients.append(client)
+
+            for dc in dead_clients:
+                if dc in ACTIVE_WS_CLIENTS:
+                    ACTIVE_WS_CLIENTS.remove(dc)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.debug(f"WS broadcast error: {e}")
+            await asyncio.sleep(1)
+
+
 # ==========================================================
 # FastAPI Lifespan & Application Setup
 # ==========================================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: launch background market tick thread
+    # Startup: launch background market tick thread & ws broadcaster
     feed_manager.start()
+    broadcaster = asyncio.create_task(broadcast_ws_loop())
     yield
     # Shutdown
+    broadcaster.cancel()
     feed_manager.stop()
 
 
@@ -442,6 +483,32 @@ def subscribe_feed_symbol(
         "exch_seg": exch_seg,
         "message": f"Instrument {symbol} subscribed to live market feed."
     }
+
+
+@app.websocket("/ws/stream")
+async def websocket_stream_endpoint(websocket: WebSocket):
+    """Real-time streaming WebSocket endpoint for UI clients."""
+    await websocket.accept()
+    ACTIVE_WS_CLIENTS.append(websocket)
+    try:
+        # Send initial snapshot immediately
+        snapshot = json.dumps({
+            "type": "snapshot",
+            "timestamp": datetime.now().isoformat(),
+            "live_prices": feed_manager.latest_prices,
+            "ticks_count": feed_manager.ticks_count,
+            "mode": feed_manager.mode,
+            "status": "connected"
+        })
+        await websocket.send_text(snapshot)
+        while True:
+            # Keep alive and handle client message pings
+            _ = await websocket.receive_text()
+    except (WebSocketDisconnect, Exception):
+        pass
+    finally:
+        if websocket in ACTIVE_WS_CLIENTS:
+            ACTIVE_WS_CLIENTS.remove(websocket)
 
 
 # ==========================================================
