@@ -1,0 +1,51 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environment & Secret Credentials
+.env
+*.env
+backend/.env
+.env.local
+.env.*.local
+
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+
+# Large binaries & Executables
+*.exe
+cloudflared.exe
+*.dll
+
+# Large Downloaded Instrument Datasets (auto-cached on startup)
+OpenAPIScripMaster.json
+backend/OpenAPIScripMaster.json
+
+# Local Cloned Reference Repositories
+repos/
+
+# Logs & Runtime Databases
+logs/
+*.log
+*.sqlite
+*.sqlite3
+
+# Distribution / Packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# IDE / Editor Files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+node_modules/
