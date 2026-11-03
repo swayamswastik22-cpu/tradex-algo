@@ -475,6 +475,7 @@ def root():
 
 
 @app.get("/health", tags=["General"])
+@app.get("/api/health", tags=["General"])
 def health_check():
     """System health check endpoint for monitoring and Hugging Face Spaces."""
     uptime = int(time.time() - APP_START_TIME)
