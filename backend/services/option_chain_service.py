@@ -7,10 +7,12 @@ and structures output conforming to repos/sensibull-realtime-options-api-ingesto
 Runs 100% headless (zero GUI dependencies: tkinter/tksheet/win10toast stripped).
 """
 
+import os
+import json
 import math
 import logging
 import time
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 
 import requests
@@ -21,7 +23,64 @@ logger = logging.getLogger("option_chain_service")
 
 router = APIRouter(prefix="/api", tags=["Option Chain"])
 
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+BACKEND_DIR = os.path.dirname(CURRENT_DIR)
+DATA_FILE = os.path.join(BACKEND_DIR, "data", "nse_stocks.json")
+
+NSE_STOCKS_MAP: Dict[str, Dict[str, Any]] = {}
+if os.path.exists(DATA_FILE):
+    try:
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            for s in json.load(f):
+                NSE_STOCKS_MAP[s["symbol"].upper()] = s
+        logger.info(f"Option Chain Service loaded {len(NSE_STOCKS_MAP)} FNO stocks.")
+    except Exception as e:
+        logger.warning(f"Error loading {DATA_FILE}: {e}")
+
 NSE_INDICES = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50"}
+
+def get_strike_step(symbol: str, spot: float) -> float:
+    """Calculates official NSE strike step based on symbol or stock price band."""
+    sym = symbol.upper()
+    if sym == "NIFTY":
+        return 50.0
+    elif sym in ("BANKNIFTY", "NIFTYBANK"):
+        return 100.0
+    elif sym == "FINNIFTY":
+        return 50.0
+    elif sym == "MIDCPNIFTY":
+        return 25.0
+    elif sym == "NIFTYNXT50":
+        return 100.0
+
+    if spot < 50:
+        return 1.0
+    elif spot < 250:
+        return 5.0
+    elif spot < 750:
+        return 10.0
+    elif spot < 1500:
+        return 20.0
+    elif spot < 3000:
+        return 50.0
+    elif spot < 10000:
+        return 100.0
+    else:
+        return 250.0
+
+def get_upcoming_expiries() -> List[str]:
+    """Computes realistic upcoming Thursday expiry dates for NSE FNO."""
+    today = date.today()
+    expiries = []
+    for d in range(1, 90):
+        target = today + timedelta(days=d)
+        if target.weekday() == 3:  # Thursday
+            expiries.append(target.strftime("%d-%b-%Y").upper())
+            if len(expiries) >= 4:
+                break
+    if not expiries:
+        expiries = [(today + timedelta(days=2)).strftime("%d-%b-%Y").upper()]
+    return expiries
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -155,34 +214,34 @@ class NSEOptionChainFetcher:
 
     def _generate_fallback_data(self, symbol: str, is_index: bool) -> Dict[str, Any]:
         """Generates realistic fallback data when NSE blocks datacenter IP, anchored to live spot."""
-        spot_defaults = {
-            "NIFTY": 23810.0,
-            "BANKNIFTY": 55500.0,
-            "FINNIFTY": 24200.0,
-            "RELIANCE": 1300.0,
-            "TCS": 2500.0,
-            "INFY": 1150.0,
-            "HDFCBANK": 725.0,
-            "SBIN": 980.0,
-            "ICICIBANK": 1420.0,
-            "LT": 3925.0,
-            "ITC": 270.0,
-        }
-        spot = spot_defaults.get(symbol, 23800.0 if is_index else 1000.0)
+        sym_clean = symbol.upper().strip()
+        spot = 23810.0 if is_index else 1000.0
+
+        if sym_clean in NSE_STOCKS_MAP:
+            s_info = NSE_STOCKS_MAP[sym_clean]
+            spot = float(s_info.get("ltp") or s_info.get("prev_close") or 1000.0)
+        elif sym_clean == "NIFTY":
+            spot = 23810.85
+        elif sym_clean == "BANKNIFTY":
+            spot = 55540.05
+        elif sym_clean == "FINNIFTY":
+            spot = 24200.0
+        elif sym_clean == "MIDCPNIFTY":
+            spot = 12850.0
 
         # Check if live spot price is streaming from Angel One feed
         try:
             from services.paper_oms import paper_engine
-            if symbol in paper_engine.live_prices and paper_engine.live_prices[symbol] > 0:
-                spot = paper_engine.live_prices[symbol]
+            if sym_clean in paper_engine.live_prices and paper_engine.live_prices[sym_clean] > 0:
+                spot = paper_engine.live_prices[sym_clean]
         except Exception:
             pass
-        step = 50.0 if symbol == "NIFTY" else (100.0 if symbol == "BANKNIFTY" else 20.0)
+
+        step = get_strike_step(sym_clean, spot)
         base_strike = round(spot / step) * step
 
-        today = datetime.now()
-        nearest_expiry = today.strftime("%d-%b-%Y")
-        all_expiries = [nearest_expiry]
+        all_expiries = get_upcoming_expiries()
+        nearest_expiry = all_expiries[0]
 
         records_data = []
         for i in range(-15, 16):
@@ -252,7 +311,7 @@ class NSEOptionChainFetcher:
             "records": {
                 "expiryDates": all_expiries,
                 "data": records_data,
-                "timestamp": today.strftime("%d-%b-%Y %H:%M:%S"),
+                "timestamp": datetime.now().strftime("%d-%b-%Y %H:%M:%S"),
                 "underlyingValue": spot,
             },
             "filtered": {
@@ -660,3 +719,47 @@ def get_option_chain(
     except Exception as e:
         logger.error(f"Error processing option chain for {symbol}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/option-chain/underlyings", tags=["Option Chain"])
+@router.get("/option-chain/symbols", tags=["Option Chain"])
+def get_option_chain_underlyings():
+    """Returns the list of all available underlyings (indices + 218 FNO stocks)
+
+    with current LTP, Previous Close, Change, %Chg, and Strike Step.
+    """
+    indices_list = [
+        {"symbol": "NIFTY", "name": "NIFTY 50", "ltp": 23810.85, "prev_close": 23440.8, "step": 50.0, "is_index": True},
+        {"symbol": "BANKNIFTY", "name": "NIFTY BANK", "ltp": 55540.05, "prev_close": 55002.2, "step": 100.0, "is_index": True},
+        {"symbol": "FINNIFTY", "name": "NIFTY FINANCIAL SERVICES", "ltp": 24200.0, "prev_close": 24050.0, "step": 50.0, "is_index": True},
+        {"symbol": "MIDCPNIFTY", "name": "NIFTY MIDCAP SELECT", "ltp": 12850.0, "prev_close": 12780.0, "step": 25.0, "is_index": True},
+    ]
+
+    stocks_list = []
+    for sym, item in NSE_STOCKS_MAP.items():
+        ltp = float(item.get("ltp", 0.0))
+        prev = float(item.get("prev_close", 0.0))
+        chg = float(item.get("change", 0.0))
+        chg_pct = float(item.get("change_pct", 0.0))
+        stocks_list.append({
+            "symbol": sym,
+            "name": sym,
+            "ltp": ltp,
+            "prev_close": prev,
+            "change": chg,
+            "change_pct": chg_pct,
+            "volume": item.get("volume", 0),
+            "step": get_strike_step(sym, ltp),
+            "high_52w": float(item.get("high_52w", 0.0)),
+            "low_52w": float(item.get("low_52w", 0.0)),
+            "is_index": False,
+        })
+
+    return {
+        "status": "ok",
+        "total": len(indices_list) + len(stocks_list),
+        "indices_count": len(indices_list),
+        "stocks_count": len(stocks_list),
+        "indices": indices_list,
+        "stocks": stocks_list,
+    }

@@ -30,6 +30,10 @@ router = APIRouter(prefix="/api", tags=["Indian Market & Day Trader"])
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+BACKEND_DIR = os.path.dirname(CURRENT_DIR)
+DATA_FILE_PATH = os.path.join(BACKEND_DIR, "data", "nse_stocks.json")
+
 # Static cache of popular NSE symbols ported from Indian-Stock-Market-API
 NSE_SYMBOLS_CACHE = {
     "indian oil": "IOC", "ioc": "IOC",
@@ -65,6 +69,19 @@ TOP_NSE_LIQUID_STOCKS = [
     "SBIN", "BHARTIARTL", "ITC", "LT", "TATAMOTORS",
     "BAJFINANCE", "MARUTI", "AXISBANK", "KOTAKBANK", "SUNPHARMA"
 ]
+
+if os.path.exists(DATA_FILE_PATH):
+    try:
+        with open(DATA_FILE_PATH, "r", encoding="utf-8") as f:
+            fno_stocks = json.load(f)
+            for s in fno_stocks:
+                sym = s["symbol"].upper().strip()
+                if sym not in TOP_NSE_LIQUID_STOCKS:
+                    TOP_NSE_LIQUID_STOCKS.append(sym)
+                NSE_SYMBOLS_CACHE[sym.lower()] = sym
+        logger.info(f"Loaded {len(fno_stocks)} FNO stocks into Day Trader watchlist.")
+    except Exception as e:
+        logger.warning(f"Error loading {DATA_FILE_PATH}: {e}")
 
 
 # ==========================================================

@@ -53,9 +53,42 @@ APP_START_TIME = time.time()
 
 
 # ==========================================================
+# Load 218 FNO Stocks Dataset & Initial Prices
+# ==========================================================
+DATA_FILE_PATH = os.path.join(CURRENT_DIR, "data", "nse_stocks.json")
+ALL_STOCK_SYMBOLS: List[str] = []
+PREVIOUS_CLOSES: Dict[str, float] = {
+    "NIFTY": 23440.8,
+    "BANKNIFTY": 55002.2,
+    "FINNIFTY": 24050.0,
+    "MIDCPNIFTY": 12850.0,
+}
+INITIAL_LTP_PRICES: Dict[str, float] = {
+    "NIFTY": 23810.85,
+    "BANKNIFTY": 55540.05,
+    "FINNIFTY": 24200.0,
+    "MIDCPNIFTY": 12850.0,
+}
+
+if os.path.exists(DATA_FILE_PATH):
+    try:
+        with open(DATA_FILE_PATH, "r", encoding="utf-8") as f:
+            loaded_stocks = json.load(f)
+            for s in loaded_stocks:
+                sym = s["symbol"].upper().strip()
+                ALL_STOCK_SYMBOLS.append(sym)
+                if s.get("prev_close"):
+                    PREVIOUS_CLOSES[sym] = float(s["prev_close"])
+                if s.get("ltp"):
+                    INITIAL_LTP_PRICES[sym] = float(s["ltp"])
+        logger.info(f"Loaded {len(ALL_STOCK_SYMBOLS)} stocks into core universe and pricing state.")
+    except Exception as e:
+        logger.warning(f"Failed to load nse_stocks.json: {e}")
+
+# ==========================================================
 # Angel One SmartWebSocketV2 Background Manager Thread
 # ==========================================================
-TOKEN_TO_SYMBOL = {
+TOKEN_TO_SYMBOL: Dict[str, str] = {
     "2885": "RELIANCE",
     "1594": "INFY",
     "11536": "TCS",
@@ -90,8 +123,8 @@ class AngelOneWebSocketManager:
         self.user_name = ""
         self.ticks_count = 0
         self.last_tick_time = ""
-        self.latest_prices: Dict[str, float] = {}
-        self.token_to_symbol: Dict[str, str] = {}
+        self.latest_prices: Dict[str, float] = dict(INITIAL_LTP_PRICES)
+        self.token_to_symbol: Dict[str, str] = dict(TOKEN_TO_SYMBOL)
         self.symbol_to_token: Dict[str, int] = {}
         self.resolved_integer_tokens: Dict[str, List[int]] = {"NSE": [], "INDICES": []}
         self.mode = (
@@ -112,14 +145,15 @@ class AngelOneWebSocketManager:
     def _fetch_scrip_master(self) -> Tuple[List[int], List[int], Dict[str, str], Dict[str, int]]:
         """Downloads Angel One OpenAPIScripMaster.json and builds fast dictionary lookup
 
-        for symbols: RELIANCE, NIFTY, BANKNIFTY, TCS, INFY, SBIN, ICICIBANK, LT, and ITC.
+        for all 218 FNO stocks plus NIFTY, BANKNIFTY, and FINNIFTY indices.
         """
-        target_symbols = ["RELIANCE", "HDFCBANK", "NIFTY", "BANKNIFTY", "TCS", "INFY", "SBIN", "ICICIBANK", "LT", "ITC"]
-        target_equities = ["RELIANCE", "HDFCBANK", "TCS", "INFY", "SBIN", "ICICIBANK", "LT", "ITC"]
+        target_equities = set(ALL_STOCK_SYMBOLS) if ALL_STOCK_SYMBOLS else {
+            "RELIANCE", "HDFCBANK", "TCS", "INFY", "SBIN", "ICICIBANK", "LT", "ITC"
+        }
         
         nse_equity_tokens: List[int] = []
         index_tokens: List[int] = []
-        token_to_symbol: Dict[str, str] = {}
+        token_to_symbol: Dict[str, str] = dict(TOKEN_TO_SYMBOL)
         symbol_to_token: Dict[str, int] = {}
 
         local_cache = os.path.join(CURRENT_DIR, "OpenAPIScripMaster.json")
@@ -559,20 +593,6 @@ def health_check():
             "angel_one_feed": f"ONLINE ({feed_manager.mode} Mode)",
         },
     }
-
-
-PREVIOUS_CLOSES = {
-    "NIFTY": 23440.8,
-    "BANKNIFTY": 55002.2,
-    "RELIANCE": 1300.0,
-    "HDFCBANK": 700.0,
-    "TCS": 2501.7,
-    "INFY": 1161.0,
-    "SBIN": 987.0,
-    "ICICIBANK": 1387.4,
-    "LT": 3939.9,
-    "ITC": 266.4,
-}
 
 
 @app.get("/api/state", tags=["General"])
