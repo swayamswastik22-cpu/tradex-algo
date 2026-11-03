@@ -24,9 +24,8 @@ COPY requirements.txt /app/
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copy backend application source and cloned repos for Optopsy
+# Copy backend application source
 COPY . /app/
-COPY ../repos /app/repos
 
 # Set permissions for non-root user
 RUN chown -R user:user /app /home/user
@@ -34,10 +33,7 @@ RUN chown -R user:user /app /home/user
 USER user
 
 EXPOSE 7860
+EXPOSE 10000
 
-# Healthcheck
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:7860/health || exit 1
-
-# Launch FastAPI app with Uvicorn on port 7860
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860"]
+# Launch FastAPI app with Uvicorn (supports Render $PORT or fallback to 7860)
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-7860}"]
