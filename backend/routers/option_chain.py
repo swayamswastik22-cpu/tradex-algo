@@ -217,6 +217,11 @@ def _fetch_nfo_batch_quotes(tokens: List[str]) -> Dict[str, Dict[str, Any]]:
     for chunk in chunks(tokens, 45):
         try:
             resp = angel_auth.smart_api.getMarketData("FULL", {"NFO": chunk})
+            if resp and not resp.get("status"):
+                if angel_auth.handle_api_response(resp):
+                    resp = angel_auth.smart_api.getMarketData("FULL", {"NFO": chunk})
+                else:
+                    break
             if resp and resp.get("status") and resp.get("data", {}).get("fetched"):
                 for item in resp["data"]["fetched"]:
                     tok = str(item.get("symbolToken", "")).strip()

@@ -658,6 +658,11 @@ class AngelOneWebSocketManager:
             try:
                 token_strs = [str(t) for t in chunk]
                 resp = angel_auth.smart_api.getMarketData("FULL", {"NSE": token_strs})
+                if resp and not resp.get("status"):
+                    if angel_auth.handle_api_response(resp):
+                        resp = angel_auth.smart_api.getMarketData("FULL", {"NSE": token_strs})
+                    else:
+                        break
                 if resp and resp.get("status") and resp.get("data", {}).get("fetched"):
                     fetched_list = resp["data"]["fetched"]
                     now_iso = datetime.now().isoformat()

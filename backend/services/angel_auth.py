@@ -107,6 +107,9 @@ class AngelAuthManager:
 
             data = session.get("data", {})
             self.jwt_token = data.get("jwtToken", "")
+            clean_jwt = self.jwt_token.replace("Bearer ", "").strip()
+            if self.smart_api:
+                self.smart_api.setAccessToken(clean_jwt)
             self.refresh_token = data.get("refreshToken", "")
             self.feed_token = data.get("feedToken", "")
             self.user_name = data.get("name", "Angel One Client")
@@ -161,6 +164,20 @@ class AngelAuthManager:
             logger.warning(f"Error refreshing session token: {ex}. Generating new session...")
         res = self.generate_session()
         return res.get("status", False)
+
+    def handle_api_response(self, resp: Any) -> bool:
+        """Checks if an API response indicates an expired or missing token (AG8003, AG8001, AB1004) and regenerates session."""
+        if isinstance(resp, dict) and not resp.get("status"):
+            err_code = str(resp.get("errorCode", "") or resp.get("errorcode", "")).upper()
+            msg = str(resp.get("message", "")).lower()
+            if err_code in ["AG8003", "AG8001", "AB1004"] or "token missing" in msg or "invalid token" in msg:
+                now = time.time()
+                if now - getattr(self, "_last_reauth_time", 0) > 10:
+                    self._last_reauth_time = now
+                    logger.warning(f"Angel One session expired ({err_code}: {resp.get('message')}). Auto-refreshing session with fresh TOTP...")
+                    auth_res = self.generate_session()
+                    return auth_res.get("status", False)
+        return False
 
 
 angel_auth = AngelAuthManager()
