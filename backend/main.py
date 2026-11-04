@@ -109,7 +109,7 @@ ACTIVE_WS_CLIENTS: List[WebSocket] = []
 GLOBAL_EVENT_LOOP: Optional[asyncio.AbstractEventLoop] = None
 
 
-def broadcast_tick_immediate(sym: str, token: str, price_val: float, high: float, low: float, volume: int, change: float, pct: float):
+def broadcast_tick_immediate(sym: str, token: str, price_val: float, high: float, low: float, volume: int, change: float, pct: float, prev_close: float = 0.0):
     """Broadcasts a live market tick immediately to all connected /ws/stream clients."""
     if not ACTIVE_WS_CLIENTS or not GLOBAL_EVENT_LOOP or not GLOBAL_EVENT_LOOP.is_running():
         return
@@ -119,11 +119,19 @@ def broadcast_tick_immediate(sym: str, token: str, price_val: float, high: float
             "symbol": sym,
             "token": token,
             "ltp": price_val,
+            "current_price": price_val,
+            "prev_close": prev_close,
+            "previous_close": prev_close,
+            "close": prev_close,
             "high": high,
             "low": low,
             "volume": volume,
             "change": change,
+            "net_change": change,
+            "pct_change": pct,
+            "change_pct": pct,
             "percent_change": pct,
+            "percentChange": pct,
             "timestamp": time.time(),
         })
 
@@ -170,6 +178,7 @@ class AngelOneWebSocketManager:
         self.token_to_symbol: Dict[str, str] = dict(TOKEN_TO_SYMBOL)
         self.symbol_to_token: Dict[str, int] = {}
         self.resolved_integer_tokens: Dict[str, List[int]] = {"NSE": [], "INDICES": []}
+        self.unmatched_symbols: List[str] = []
         self.mode = (
             "LIVE (Angel One SmartWebSocketV2)"
             if angel_auth.is_configured()
@@ -188,53 +197,79 @@ class AngelOneWebSocketManager:
         self.running = False
 
     def _fetch_scrip_master(self) -> Tuple[List[int], List[int], Dict[str, str], Dict[str, int]]:
-        """Downloads Angel One OpenAPIScripMaster.json and builds fast dictionary lookup
+        """Downloads Angel One OpenAPIScripMaster.json live on startup and builds fast 4-tier lookup
 
         for all 218 FNO stocks plus NIFTY, BANKNIFTY, SENSEX, and INDIA VIX.
         """
         target_equities = set(ALL_STOCK_SYMBOLS) if ALL_STOCK_SYMBOLS else {
             "RELIANCE", "HDFCBANK", "TCS", "INFY", "SBIN", "ICICIBANK", "LT", "ITC"
         }
-        target_eq_map = {f"{s}-EQ": s for s in target_equities}
         
         nse_equity_tokens: List[int] = []
         index_tokens: List[int] = []
         token_to_symbol: Dict[str, str] = dict(TOKEN_TO_SYMBOL)
         symbol_to_token: Dict[str, int] = {}
+        self.unmatched_symbols = []
 
         local_cache = os.path.join(CURRENT_DIR, "OpenAPIScripMaster.json")
-        instruments = None
+        instruments = getattr(self, "instruments_cache", None)
 
-        if os.path.exists(local_cache):
+        # 1. Download live Angel One Scrip Master on startup if not already loaded or cache older than 12h
+        is_fresh_cache = os.path.exists(local_cache) and (time.time() - os.path.getmtime(local_cache) < 43200)
+        if not instruments and is_fresh_cache:
             try:
                 with open(local_cache, "r", encoding="utf-8") as f:
                     instruments = json.load(f)
-                logger.info(f"Loaded {len(instruments)} instruments from local ScripMaster cache.")
+                self.instruments_cache = instruments
+                logger.info(f"Loaded {len(instruments)} instruments from fresh daily ScripMaster cache.")
             except Exception as e:
                 logger.warning(f"Failed to read local cache: {e}")
 
         if not instruments:
             urls = [
-                "https://margincalculator.angelbroking.com/OpenAPI_File/OpenAPIScripMaster.json",
                 "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json",
+                "https://margincalculator.angelbroking.com/OpenAPI_File/OpenAPIScripMaster.json",
                 "https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json",
             ]
             for url in urls:
                 try:
-                    logger.info(f"Downloading ScripMaster from: {url}")
-                    resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+                    logger.info(f"Downloading live Angel One ScripMaster from: {url}")
+                    resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=25)
                     if resp.status_code == 200 and "application/json" in resp.headers.get("content-type", ""):
                         instruments = resp.json()
-                        with open(local_cache, "w", encoding="utf-8") as f:
-                            json.dump(instruments, f)
-                        logger.info(f"Downloaded and cached {len(instruments)} instruments from {url}.")
+                        self.instruments_cache = instruments
+                        try:
+                            with open(local_cache, "w", encoding="utf-8") as f:
+                                json.dump(instruments, f)
+                            logger.info(f"Downloaded and cached {len(instruments)} instruments from {url}.")
+                        except Exception:
+                            pass
                         break
                 except Exception as ex:
-                    logger.warning(f"Error fetching {url}: {ex}")
+                    logger.warning(f"Live ScripMaster download attempt failed ({url}): {ex}")
+
+        # Fallback to local cache if network download was unreachable
+        if not instruments and os.path.exists(local_cache):
+            try:
+                with open(local_cache, "r", encoding="utf-8") as f:
+                    instruments = json.load(f)
+                self.instruments_cache = instruments
+                logger.info(f"Loaded {len(instruments)} instruments from local ScripMaster cache.")
+            except Exception as e:
+                logger.warning(f"Failed to read local cache: {e}")
 
         if instruments:
+            # Pre-index scrip master for 4-tier lookup
+            chain_a: Dict[Tuple[str, str], Dict[str, Any]] = {}  # (exch, symbol) -> item
+            chain_b: Dict[Tuple[str, str], Dict[str, Any]] = {}  # (exch, name) -> item
+            chain_c: Dict[Tuple[str, str], Dict[str, Any]] = {}  # (exch, name) -> item
+            chain_d: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)  # (exch, name) -> list of items
+
             for item in instruments:
-                sym = str(item.get("symbol", "")).upper()
+                sym = str(item.get("symbol", "")).upper().strip()
+                name = str(item.get("name", "")).upper().strip()
+                exch = str(item.get("exch_seg", "")).upper().strip()
+                itype = str(item.get("instrumenttype", "")).upper().strip()
                 token_raw = item.get("token")
                 if not token_raw:
                     continue
@@ -242,18 +277,6 @@ class AngelOneWebSocketManager:
                     token_int = int(token_raw)
                 except (ValueError, TypeError):
                     continue
-
-                exch = item.get("exch_seg")
-                name = str(item.get("name", "")).upper()
-                itype = str(item.get("instrumenttype", ""))
-
-                # Strict Match Equities in NSE by "-EQ"
-                if exch == "NSE" and sym in target_eq_map:
-                    clean_sym = target_eq_map[sym]
-                    if token_int not in nse_equity_tokens:
-                        nse_equity_tokens.append(token_int)
-                    token_to_symbol[str(token_int)] = clean_sym
-                    symbol_to_token[clean_sym] = token_int
 
                 # Strict Match Indices (tokens 99926000, 99926009, 99919000, 99926017 and 26000, 26009)
                 if token_int in [99926000, 26000]:
@@ -277,11 +300,48 @@ class AngelOneWebSocketManager:
                     token_to_symbol[str(token_int)] = "INDIA VIX"
                     symbol_to_token["INDIA VIX"] = token_int
 
-                # Match Active NFO Contracts (Futures & Options) for all 218 FNO stocks & indices
-                if exch == "NFO":
+                # Build Chains for Cash & Derivatives
+                if exch == "NSE":
+                    chain_a[(exch, sym)] = item
+                    if sym.endswith("-EQ"):
+                        chain_b[(exch, name)] = item
+                    if itype in ["", "EQ", "BE"]:
+                        chain_c[(exch, name)] = item
+                elif exch == "NFO":
+                    if itype == "FUTSTK":
+                        chain_d[(exch, name)].append(item)
                     clean_name = name.replace("-EQ", "").strip().upper()
                     if clean_name in target_equities or clean_name in ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]:
                         self.nfo_contracts_by_symbol[clean_name].append(item)
+
+            # Resolve every symbol using the strict 4-tier fallback chain
+            for target_sym in sorted(target_equities):
+                item = None
+                # a) exch_seg == "NSE" and symbol.upper() == f"{sym}-EQ"
+                if ("NSE", f"{target_sym}-EQ") in chain_a:
+                    item = chain_a[("NSE", f"{target_sym}-EQ")]
+                # b) exch_seg == "NSE" and name.upper() == sym and symbol.upper().endswith("-EQ")
+                elif ("NSE", target_sym) in chain_b:
+                    item = chain_b[("NSE", target_sym)]
+                # c) exch_seg == "NSE" and name.upper() == sym and instrumenttype == "" (catches -BE series)
+                elif ("NSE", target_sym) in chain_c:
+                    item = chain_c[("NSE", target_sym)]
+                # d) Nearest active FUTSTK in exch_seg == "NFO" where name.upper() == sym
+                elif ("NFO", target_sym) in chain_d and chain_d[("NFO", target_sym)]:
+                    item = chain_d[("NFO", target_sym)][0]
+
+                if item:
+                    tok_raw = item.get("token")
+                    try:
+                        tok_int = int(tok_raw)
+                        if tok_int not in nse_equity_tokens:
+                            nse_equity_tokens.append(tok_int)
+                        token_to_symbol[str(tok_int)] = target_sym
+                        symbol_to_token[target_sym] = tok_int
+                    except (ValueError, TypeError):
+                        self.unmatched_symbols.append(target_sym)
+                else:
+                    self.unmatched_symbols.append(target_sym)
 
         # Guaranteed fallbacks for exact integer tokens
         default_map = {
@@ -401,12 +461,14 @@ class AngelOneWebSocketManager:
                             self.ticks_count += 1
                             self.last_tick_time = now_iso
                             self.latest_prices[sym] = price_val
+                            self.latest_prices[token] = price_val
 
                             if close_price_val and close_price_val > 0:
                                 self.previous_closes[sym] = close_price_val
+                                self.previous_closes[token] = close_price_val
                                 PREVIOUS_CLOSES[sym] = close_price_val
 
-                            prev_close = self.previous_closes.get(sym, price_val)
+                            prev_close = self.previous_closes.get(sym) or PREVIOUS_CLOSES.get(sym, price_val)
                             final_high = day_high if day_high else max(price_val, prev_close)
                             final_low = day_low if day_low else min(price_val, prev_close)
                             chg = round(price_val - prev_close, 2)
@@ -426,16 +488,25 @@ class AngelOneWebSocketManager:
                                 "token": token,
                                 "symbol": sym,
                                 "ltp": price_val,
+                                "current_price": price_val,
                                 "high": round(final_high, 2),
                                 "low": round(final_low, 2),
                                 "open": price_val,
                                 "prev_close": prev_close,
+                                "previous_close": prev_close,
+                                "close": prev_close,
                                 "change": chg,
+                                "net_change": chg,
+                                "netChange": chg,
+                                "pct_change": pct,
+                                "change_pct": pct,
                                 "percent_change": pct,
+                                "percentChange": pct,
                                 "volume": volume,
                                 "orb_high": round(orb_high, 2),
                                 "orb_low": round(orb_low, 2),
                                 "last_tick_time": now_iso,
+                                "feed_source": "Angel One SmartWebSocketV2 (Live)",
                             }
                             # Update global market_state for both symbol and token
                             self.market_state[sym] = tick_record
@@ -445,7 +516,7 @@ class AngelOneWebSocketManager:
                             paper_engine.process_tick(sym, price_val)
 
                             # Broadcast immediately to all connected frontend clients
-                            broadcast_tick_immediate(sym, token, price_val, final_high, final_low, volume, chg, pct)
+                            broadcast_tick_immediate(sym, token, price_val, final_high, final_low, volume, chg, pct, prev_close)
 
                     except Exception as ex:
                         logger.error(f"Tick parse error: {ex}")
@@ -543,8 +614,9 @@ class AngelOneWebSocketManager:
                         if close_p <= 0:
                             close_p = ltp
 
-                        pct_change = round(((ltp - close_p) / close_p) * 100, 2) if close_p > 0 else 0.0
-                        chg = round(ltp - close_p, 2)
+                        net_change = float(item.get("netChange") if item.get("netChange") is not None else (ltp - close_p))
+                        chg = round(net_change, 2)
+                        pct_change = round(((ltp - close_p) / close_p) * 100, 2) if close_p > 0 else float(item.get("percentChange", 0.0) or 0.0)
                         high_p = float(item.get("high") or ltp)
                         low_p = float(item.get("low") or ltp)
                         open_p = float(item.get("open") or ltp)
@@ -573,7 +645,12 @@ class AngelOneWebSocketManager:
                             "prev_close": close_p,
                             "previous_close": close_p,
                             "change": chg,
+                            "net_change": chg,
+                            "netChange": chg,
+                            "pct_change": pct_change,
+                            "change_pct": pct_change,
                             "percent_change": pct_change,
+                            "percentChange": pct_change,
                             "volume": vol,
                             "oi": oi,
                             "orb_high": or_high,
@@ -873,9 +950,15 @@ def debug_feed():
         "last_auth_error": angel_auth.last_error_msg,
         "matched_eq_tokens_count": len(feed_manager.resolved_integer_tokens.get("NSE", [])),
         "live_fetched_count": len(feed_manager.latest_prices),
+        "unmatched_symbols": getattr(feed_manager, "unmatched_symbols", []),
+        "atherenerg": feed_manager.market_state.get("ATHERENERG"),
+        "reliance": feed_manager.market_state.get("RELIANCE"),
         "sample_stocks": {
             k: feed_manager.market_state[k]
-            for k in ["NIFTY", "RELIANCE", "HDFCBANK", "TCS", "SBIN"]
+            for k in [
+                "NIFTY", "RELIANCE", "HDFCBANK", "TCS", "SBIN",
+                "ATHERENERG", "SWIGGY", "HYUNDAI", "M&M", "BAJAJ-AUTO", "ETERNAL"
+            ]
             if k in feed_manager.market_state
         },
     }
@@ -956,9 +1039,17 @@ def get_system_state():
         ticker_data[sym] = {
             "symbol": sym,
             "ltp": ltp,
+            "current_price": ltp,
             "prev_close": prev_close,
+            "previous_close": prev_close,
+            "close": prev_close,
             "change": chg,
+            "net_change": chg,
+            "netChange": chg,
+            "pct_change": chg_pct,
+            "change_pct": chg_pct,
             "percent_change": chg_pct,
+            "percentChange": chg_pct,
             "direction": "up" if chg > 0 else ("down" if chg < 0 else "neutral"),
         }
 
