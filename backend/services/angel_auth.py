@@ -23,13 +23,15 @@ for p in [os.path.join(CURRENT_DIR, ".env"), os.path.join(BACKEND_DIR, ".env"), 
 logger = logging.getLogger("angel_auth")
 
 
-def get_env_cred(keys: List[str]) -> str:
-    """Checks a list of possible environment variable names and returns the first non-empty value."""
+def get_env_cred(keys: List[str], default: str = "") -> str:
+    """Checks a list of possible environment variable names and returns the first non-empty value, or default."""
     for k in keys:
         val = os.getenv(k)
-        if val and str(val).strip():
-            return str(val).strip()
-    return ""
+        if val is not None:
+            clean_val = str(val).strip().strip('"').strip("'")
+            if clean_val:
+                return clean_val
+    return default
 
 
 class AngelAuthManager:
@@ -52,11 +54,23 @@ class AngelAuthManager:
         self.reload_env()
 
     def reload_env(self):
-        """Reloads credentials from all possible environment variable aliases."""
-        self.api_key = get_env_cred(["ANGEL_API_KEY", "SMARTAPI_KEY", "API_KEY", "SMARTAPI_API_KEY", "ANGEL_KEY"])
-        self.client_code = get_env_cred(["ANGEL_CLIENT_CODE", "CLIENT_CODE", "ANGEL_CLIENT_ID", "SMARTAPI_CLIENT_CODE", "CLIENT_ID"])
-        self.pin = get_env_cred(["ANGEL_PIN", "ANGEL_PASSWORD", "PIN", "SMARTAPI_PASSWORD", "PASSWORD"])
-        self.totp_secret = get_env_cred(["ANGEL_TOTP_SECRET", "TOTP_SECRET", "SMARTAPI_TOTP_KEY", "ANGEL_TOTP_KEY", "TOTP_KEY"])
+        """Reloads credentials from all possible environment variable aliases with built-in fallbacks."""
+        self.api_key = get_env_cred(
+            ["ANGEL_API_KEY", "SMARTAPI_KEY", "API_KEY", "SMARTAPI_API_KEY", "ANGEL_KEY"],
+            default="TqY3nG2S",
+        )
+        self.client_code = get_env_cred(
+            ["ANGEL_CLIENT_CODE", "CLIENT_CODE", "ANGEL_CLIENT_ID", "SMARTAPI_CLIENT_CODE", "CLIENT_ID", "USER_ID", "ANGEL_USER_ID"],
+            default="AACC780284",
+        )
+        self.pin = get_env_cred(
+            ["ANGEL_PIN", "PIN", "MPIN", "ANGEL_MPIN", "SMARTAPI_PIN", "SMARTAPI_MPIN", "ANGEL_PASSWORD", "PASSWORD", "SMARTAPI_PASSWORD"],
+            default="0743",
+        )
+        self.totp_secret = get_env_cred(
+            ["ANGEL_TOTP_SECRET", "TOTP_SECRET", "SMARTAPI_TOTP_KEY", "ANGEL_TOTP_KEY", "TOTP_KEY", "SMARTAPI_TOTP_SECRET", "TOTP"],
+            default="LAHXHBC3PL7B6GJMT3O7XJKIRA",
+        )
 
     def is_configured(self) -> bool:
         self.reload_env()
