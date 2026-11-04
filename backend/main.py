@@ -18,11 +18,12 @@ import random
 import logging
 import threading
 import asyncio
+import gc
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Tuple
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect, Request
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
 
@@ -163,6 +164,8 @@ class AngelOneWebSocketManager:
         self.thread: Optional[threading.Thread] = None
         self.quote_thread: Optional[threading.Thread] = None
         self.sws: Optional[Any] = None
+        self._scrip_lock = threading.Lock()
+        self._scrip_loaded = threading.Event()
         angel_auth.reload_env()
         self.api_key = angel_auth.api_key
         self.client_code = angel_auth.client_code
@@ -179,6 +182,23 @@ class AngelOneWebSocketManager:
         self.symbol_to_token: Dict[str, int] = {}
         self.resolved_integer_tokens: Dict[str, List[int]] = {"NSE": [], "INDICES": []}
         self.unmatched_symbols: List[str] = []
+
+        # Pre-seed initial integer token mappings so /api/state and /api/trader/scanner respond in <50ms without blocking startup
+        default_map = {
+            2885: "RELIANCE", 1333: "HDFCBANK", 11536: "TCS", 1594: "INFY", 3045: "SBIN",
+            4963: "ICICIBANK", 11483: "LT", 1660: "ITC", 317: "BAJFINANCE", 1232: "HCLTECH",
+            10604: "BHARTIARTL", 1922: "KOTAKBANK", 3787: "WIPRO", 3456: "TATAMOTORS",
+            26000: "NIFTY", 26009: "BANKNIFTY", 99926000: "NIFTY", 99926009: "BANKNIFTY",
+            99919000: "SENSEX", 99926017: "INDIA VIX",
+        }
+        for tok, sym in default_map.items():
+            self.token_to_symbol[str(tok)] = sym
+            self.symbol_to_token[sym] = tok
+        self.resolved_integer_tokens = {
+            "NSE": [tok for tok in default_map if tok not in [26000, 26009, 99926000, 99926009, 99919000, 99926017]],
+            "INDICES": [99926000, 99926009, 99919000, 99926017]
+        }
+
         self.mode = (
             "LIVE (Angel One SmartWebSocketV2)"
             if angel_auth.is_configured()
@@ -187,6 +207,8 @@ class AngelOneWebSocketManager:
 
     def start(self):
         self.running = True
+        # Run ScripMaster download and token indexing in a background daemon thread so Uvicorn port binds instantly
+        threading.Thread(target=self._fetch_scrip_master, daemon=True, name="ScripMasterLoader").start()
         self.thread = threading.Thread(target=self._run_loop, daemon=True, name="AngelOneFeedThread")
         self.thread.start()
         self.quote_thread = threading.Thread(target=self._run_market_data_poll_loop, daemon=True, name="AngelOneQuotePoller")
@@ -197,181 +219,206 @@ class AngelOneWebSocketManager:
         self.running = False
 
     def _fetch_scrip_master(self) -> Tuple[List[int], List[int], Dict[str, str], Dict[str, int]]:
-        """Downloads Angel One OpenAPIScripMaster.json live on startup and builds fast 4-tier lookup
+        """Downloads Angel One OpenAPIScripMaster.json in a background thread, strictly filters for the
 
-        for all 218 FNO stocks plus NIFTY, BANKNIFTY, SENSEX, and INDIA VIX.
+        218 FNO symbols + 4 indices, frees the raw list with gc.collect() to keep RAM < 150MB, and indexes tokens.
         """
-        target_equities = set(ALL_STOCK_SYMBOLS) if ALL_STOCK_SYMBOLS else {
-            "RELIANCE", "HDFCBANK", "TCS", "INFY", "SBIN", "ICICIBANK", "LT", "ITC"
-        }
-        
-        nse_equity_tokens: List[int] = []
-        index_tokens: List[int] = []
-        token_to_symbol: Dict[str, str] = dict(TOKEN_TO_SYMBOL)
-        symbol_to_token: Dict[str, int] = {}
-        self.unmatched_symbols = []
+        with self._scrip_lock:
+            if self._scrip_loaded.is_set() and len(self.resolved_integer_tokens.get("NSE", [])) > 20:
+                return (
+                    self.resolved_integer_tokens["NSE"],
+                    self.resolved_integer_tokens.get("INDICES", []),
+                    self.token_to_symbol,
+                    self.symbol_to_token,
+                )
 
-        local_cache = os.path.join(CURRENT_DIR, "OpenAPIScripMaster.json")
-        instruments = getattr(self, "instruments_cache", None)
+            target_equities = set(ALL_STOCK_SYMBOLS) if ALL_STOCK_SYMBOLS else {
+                "RELIANCE", "HDFCBANK", "TCS", "INFY", "SBIN", "ICICIBANK", "LT", "ITC"
+            }
+            target_names = {s.upper().strip() for s in target_equities}
+            target_names.update([
+                "NIFTY", "BANKNIFTY", "SENSEX", "INDIA VIX", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50"
+            ])
+            
+            nse_equity_tokens: List[int] = []
+            index_tokens: List[int] = []
+            token_to_symbol: Dict[str, str] = dict(self.token_to_symbol)
+            symbol_to_token: Dict[str, int] = dict(self.symbol_to_token)
+            self.unmatched_symbols = []
 
-        # 1. Download live Angel One Scrip Master on startup if not already loaded or cache older than 12h
-        is_fresh_cache = os.path.exists(local_cache) and (time.time() - os.path.getmtime(local_cache) < 43200)
-        if not instruments and is_fresh_cache:
-            try:
-                with open(local_cache, "r", encoding="utf-8") as f:
-                    instruments = json.load(f)
-                self.instruments_cache = instruments
-                logger.info(f"Loaded {len(instruments)} instruments from fresh daily ScripMaster cache.")
-            except Exception as e:
-                logger.warning(f"Failed to read local cache: {e}")
+            local_cache = os.path.join(CURRENT_DIR, "OpenAPIScripMaster.json")
+            raw_instruments = None
 
-        if not instruments:
-            urls = [
-                "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json",
-                "https://margincalculator.angelbroking.com/OpenAPI_File/OpenAPIScripMaster.json",
-                "https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json",
-            ]
-            for url in urls:
+            # 1. Download live Angel One Scrip Master if not already loaded or cache older than 12h
+            is_fresh_cache = os.path.exists(local_cache) and (time.time() - os.path.getmtime(local_cache) < 43200)
+            if is_fresh_cache:
                 try:
-                    logger.info(f"Downloading live Angel One ScripMaster from: {url}")
-                    resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=25)
-                    if resp.status_code == 200 and "application/json" in resp.headers.get("content-type", ""):
-                        instruments = resp.json()
-                        self.instruments_cache = instruments
-                        try:
-                            with open(local_cache, "w", encoding="utf-8") as f:
-                                json.dump(instruments, f)
-                            logger.info(f"Downloaded and cached {len(instruments)} instruments from {url}.")
-                        except Exception:
-                            pass
-                        break
-                except Exception as ex:
-                    logger.warning(f"Live ScripMaster download attempt failed ({url}): {ex}")
+                    with open(local_cache, "r", encoding="utf-8") as f:
+                        raw_instruments = json.load(f)
+                    logger.info(f"Loaded {len(raw_instruments)} instruments from fresh daily ScripMaster cache.")
+                except Exception as e:
+                    logger.warning(f"Failed to read local cache: {e}")
 
-        # Fallback to local cache if network download was unreachable
-        if not instruments and os.path.exists(local_cache):
-            try:
-                with open(local_cache, "r", encoding="utf-8") as f:
-                    instruments = json.load(f)
-                self.instruments_cache = instruments
-                logger.info(f"Loaded {len(instruments)} instruments from local ScripMaster cache.")
-            except Exception as e:
-                logger.warning(f"Failed to read local cache: {e}")
-
-        if instruments:
-            # Pre-index scrip master for 4-tier lookup
-            chain_a: Dict[Tuple[str, str], Dict[str, Any]] = {}  # (exch, symbol) -> item
-            chain_b: Dict[Tuple[str, str], Dict[str, Any]] = {}  # (exch, name) -> item
-            chain_c: Dict[Tuple[str, str], Dict[str, Any]] = {}  # (exch, name) -> item
-            chain_d: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)  # (exch, name) -> list of items
-
-            for item in instruments:
-                sym = str(item.get("symbol", "")).upper().strip()
-                name = str(item.get("name", "")).upper().strip()
-                exch = str(item.get("exch_seg", "")).upper().strip()
-                itype = str(item.get("instrumenttype", "")).upper().strip()
-                token_raw = item.get("token")
-                if not token_raw:
-                    continue
-                try:
-                    token_int = int(token_raw)
-                except (ValueError, TypeError):
-                    continue
-
-                # Strict Match Indices (tokens 99926000, 99926009, 99919000, 99926017 and 26000, 26009)
-                if token_int in [99926000, 26000]:
-                    if token_int not in index_tokens:
-                        index_tokens.append(token_int)
-                    token_to_symbol[str(token_int)] = "NIFTY"
-                    symbol_to_token["NIFTY"] = token_int
-                elif token_int in [99926009, 26009]:
-                    if token_int not in index_tokens:
-                        index_tokens.append(token_int)
-                    token_to_symbol[str(token_int)] = "BANKNIFTY"
-                    symbol_to_token["BANKNIFTY"] = token_int
-                elif token_int == 99919000:
-                    if token_int not in index_tokens:
-                        index_tokens.append(token_int)
-                    token_to_symbol[str(token_int)] = "SENSEX"
-                    symbol_to_token["SENSEX"] = token_int
-                elif token_int == 99926017:
-                    if token_int not in index_tokens:
-                        index_tokens.append(token_int)
-                    token_to_symbol[str(token_int)] = "INDIA VIX"
-                    symbol_to_token["INDIA VIX"] = token_int
-
-                # Build Chains for Cash & Derivatives
-                if exch == "NSE":
-                    chain_a[(exch, sym)] = item
-                    if sym.endswith("-EQ"):
-                        chain_b[(exch, name)] = item
-                    if itype in ["", "EQ", "BE"]:
-                        chain_c[(exch, name)] = item
-                elif exch == "NFO":
-                    if itype == "FUTSTK":
-                        chain_d[(exch, name)].append(item)
-                    clean_name = name.replace("-EQ", "").strip().upper()
-                    if clean_name in target_equities or clean_name in ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]:
-                        self.nfo_contracts_by_symbol[clean_name].append(item)
-
-            # Resolve every symbol using the strict 4-tier fallback chain
-            for target_sym in sorted(target_equities):
-                item = None
-                # a) exch_seg == "NSE" and symbol.upper() == f"{sym}-EQ"
-                if ("NSE", f"{target_sym}-EQ") in chain_a:
-                    item = chain_a[("NSE", f"{target_sym}-EQ")]
-                # b) exch_seg == "NSE" and name.upper() == sym and symbol.upper().endswith("-EQ")
-                elif ("NSE", target_sym) in chain_b:
-                    item = chain_b[("NSE", target_sym)]
-                # c) exch_seg == "NSE" and name.upper() == sym and instrumenttype == "" (catches -BE series)
-                elif ("NSE", target_sym) in chain_c:
-                    item = chain_c[("NSE", target_sym)]
-                # d) Nearest active FUTSTK in exch_seg == "NFO" where name.upper() == sym
-                elif ("NFO", target_sym) in chain_d and chain_d[("NFO", target_sym)]:
-                    item = chain_d[("NFO", target_sym)][0]
-
-                if item:
-                    tok_raw = item.get("token")
+            if not raw_instruments:
+                urls = [
+                    "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json",
+                    "https://margincalculator.angelbroking.com/OpenAPI_File/OpenAPIScripMaster.json",
+                    "https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json",
+                ]
+                for url in urls:
                     try:
-                        tok_int = int(tok_raw)
-                        if tok_int not in nse_equity_tokens:
-                            nse_equity_tokens.append(tok_int)
-                        token_to_symbol[str(tok_int)] = target_sym
-                        symbol_to_token[target_sym] = tok_int
+                        logger.info(f"Downloading live Angel One ScripMaster from: {url}")
+                        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=25)
+                        if resp.status_code == 200 and "application/json" in resp.headers.get("content-type", ""):
+                            raw_instruments = resp.json()
+                            try:
+                                with open(local_cache, "w", encoding="utf-8") as f:
+                                    json.dump(raw_instruments, f)
+                                logger.info(f"Downloaded and cached {len(raw_instruments)} instruments from {url}.")
+                            except Exception:
+                                pass
+                            break
+                    except Exception as ex:
+                        logger.warning(f"Live ScripMaster download attempt failed ({url}): {ex}")
+
+            # Fallback to local cache if network download was unreachable
+            if not raw_instruments and os.path.exists(local_cache):
+                try:
+                    with open(local_cache, "r", encoding="utf-8") as f:
+                        raw_instruments = json.load(f)
+                    logger.info(f"Loaded {len(raw_instruments)} instruments from local ScripMaster cache.")
+                except Exception as e:
+                    logger.warning(f"Failed to read local cache: {e}")
+
+            if raw_instruments:
+                # Keep ONLY rows where name or symbol is in the 218 FNO symbols + 4 indices
+                filtered_instruments = []
+                for item in raw_instruments:
+                    clean_name = str(item.get("name", "")).upper().strip().replace("-EQ", "")
+                    sym = str(item.get("symbol", "")).upper().strip()
+                    tok = str(item.get("token", "")).strip()
+                    if (
+                        clean_name in target_names
+                        or sym.replace("-EQ", "") in target_names
+                        or tok in ["99926000", "26000", "99926009", "26009", "99919000", "99926017"]
+                    ):
+                        filtered_instruments.append(item)
+
+                # IMMEDIATELY delete raw list and invoke garbage collection so RAM stays <150MB
+                del raw_instruments
+                gc.collect()
+                logger.info(f"Filtered ScripMaster to {len(filtered_instruments)} relevant instruments (RAM protected).")
+
+                # Pre-index scrip master for 4-tier lookup
+                chain_a: Dict[Tuple[str, str], Dict[str, Any]] = {}
+                chain_b: Dict[Tuple[str, str], Dict[str, Any]] = {}
+                chain_c: Dict[Tuple[str, str], Dict[str, Any]] = {}
+                chain_d: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+
+                for item in filtered_instruments:
+                    sym = str(item.get("symbol", "")).upper().strip()
+                    name = str(item.get("name", "")).upper().strip()
+                    exch = str(item.get("exch_seg", "")).upper().strip()
+                    itype = str(item.get("instrumenttype", "")).upper().strip()
+                    token_raw = item.get("token")
+                    if not token_raw:
+                        continue
+                    try:
+                        token_int = int(token_raw)
                     except (ValueError, TypeError):
+                        continue
+
+                    # Strict Match Indices (tokens 99926000, 99926009, 99919000, 99926017 and 26000, 26009)
+                    if token_int in [99926000, 26000]:
+                        if token_int not in index_tokens:
+                            index_tokens.append(token_int)
+                        token_to_symbol[str(token_int)] = "NIFTY"
+                        symbol_to_token["NIFTY"] = token_int
+                    elif token_int in [99926009, 26009]:
+                        if token_int not in index_tokens:
+                            index_tokens.append(token_int)
+                        token_to_symbol[str(token_int)] = "BANKNIFTY"
+                        symbol_to_token["BANKNIFTY"] = token_int
+                    elif token_int == 99919000:
+                        if token_int not in index_tokens:
+                            index_tokens.append(token_int)
+                        token_to_symbol[str(token_int)] = "SENSEX"
+                        symbol_to_token["SENSEX"] = token_int
+                    elif token_int == 99926017:
+                        if token_int not in index_tokens:
+                            index_tokens.append(token_int)
+                        token_to_symbol[str(token_int)] = "INDIA VIX"
+                        symbol_to_token["INDIA VIX"] = token_int
+
+                    # Build Chains for Cash & Derivatives
+                    if exch == "NSE":
+                        chain_a[(exch, sym)] = item
+                        if sym.endswith("-EQ"):
+                            chain_b[(exch, name)] = item
+                        if itype in ["", "EQ", "BE"]:
+                            chain_c[(exch, name)] = item
+                    elif exch == "NFO":
+                        if itype == "FUTSTK":
+                            chain_d[(exch, name)].append(item)
+                        clean_name = name.replace("-EQ", "").strip().upper()
+                        if clean_name in target_equities or clean_name in ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]:
+                            self.nfo_contracts_by_symbol[clean_name].append(item)
+
+                # Resolve every symbol using the strict 4-tier fallback chain
+                for target_sym in sorted(target_equities):
+                    item = None
+                    if ("NSE", f"{target_sym}-EQ") in chain_a:
+                        item = chain_a[("NSE", f"{target_sym}-EQ")]
+                    elif ("NSE", target_sym) in chain_b:
+                        item = chain_b[("NSE", target_sym)]
+                    elif ("NSE", target_sym) in chain_c:
+                        item = chain_c[("NSE", target_sym)]
+                    elif ("NFO", target_sym) in chain_d and chain_d[("NFO", target_sym)]:
+                        item = chain_d[("NFO", target_sym)][0]
+
+                    if item:
+                        tok_raw = item.get("token")
+                        try:
+                            tok_int = int(tok_raw)
+                            if tok_int not in nse_equity_tokens:
+                                nse_equity_tokens.append(tok_int)
+                            token_to_symbol[str(tok_int)] = target_sym
+                            symbol_to_token[target_sym] = tok_int
+                        except (ValueError, TypeError):
+                            self.unmatched_symbols.append(target_sym)
+                    else:
                         self.unmatched_symbols.append(target_sym)
+
+                del filtered_instruments
+                gc.collect()
+
+            # Guaranteed fallbacks for exact integer tokens
+            default_map = {
+                2885: "RELIANCE", 1333: "HDFCBANK", 11536: "TCS", 1594: "INFY", 3045: "SBIN",
+                4963: "ICICIBANK", 11483: "LT", 1660: "ITC", 317: "BAJFINANCE", 1232: "HCLTECH",
+                10604: "BHARTIARTL", 1922: "KOTAKBANK", 3787: "WIPRO", 3456: "TATAMOTORS",
+                26000: "NIFTY", 26009: "BANKNIFTY", 99926000: "NIFTY", 99926009: "BANKNIFTY",
+                99919000: "SENSEX", 99926017: "INDIA VIX",
+            }
+            for tok, sym in default_map.items():
+                token_to_symbol[str(tok)] = sym
+                if sym not in symbol_to_token:
+                    symbol_to_token[sym] = tok
+                if tok in [26000, 26009, 99926000, 99926009, 99919000, 99926017]:
+                    if tok not in index_tokens:
+                        index_tokens.append(tok)
                 else:
-                    self.unmatched_symbols.append(target_sym)
+                    if tok not in nse_equity_tokens:
+                        nse_equity_tokens.append(tok)
 
-        # Guaranteed fallbacks for exact integer tokens
-        default_map = {
-            2885: "RELIANCE",
-            1333: "HDFCBANK",
-            11536: "TCS",
-            1594: "INFY",
-            3045: "SBIN",
-            4963: "ICICIBANK",
-            11483: "LT",
-            1660: "ITC",
-            26000: "NIFTY",
-            26009: "BANKNIFTY",
-            99926000: "NIFTY",
-            99926009: "BANKNIFTY",
-            99919000: "SENSEX",
-            99926017: "INDIA VIX",
-        }
-        for tok, sym in default_map.items():
-            token_to_symbol[str(tok)] = sym
-            if sym not in symbol_to_token:
-                symbol_to_token[sym] = tok
-            if tok in [26000, 26009, 99926000, 99926009, 99919000, 99926017]:
-                if tok not in index_tokens:
-                    index_tokens.append(tok)
-            else:
-                if tok not in nse_equity_tokens:
-                    nse_equity_tokens.append(tok)
-
-        return nse_equity_tokens, index_tokens, token_to_symbol, symbol_to_token
+            self.token_to_symbol = token_to_symbol
+            self.symbol_to_token = symbol_to_token
+            self.resolved_integer_tokens = {"NSE": nse_equity_tokens, "INDICES": index_tokens}
+            self._scrip_loaded.set()
+            logger.info(
+                f"Resolved Token Lookup: {len(symbol_to_token)} symbols, {len(nse_equity_tokens)} Equity tokens, {len(index_tokens)} Index tokens."
+            )
+            return nse_equity_tokens, index_tokens, token_to_symbol, symbol_to_token
 
     def _run_loop(self):
         if "LIVE" in self.mode:
@@ -818,21 +865,55 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS Middleware (allowing AI Studio frontend and localhost)
+# CORS Middleware: wildcard * with allow_credentials=False for AI Studio preview iframes (*.scf.usercontent.goog)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://tradex-algo-trading-desk.ai.studio",
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://localhost:7860",
-        "https://tradex-algo.onrender.com",
-    ],
-    allow_origin_regex=r"https://.*\.ai\.studio",
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_cors_headers(request: Request, call_next):
+    """Global HTTP middleware enforcing Access-Control-Allow-Origin: * on every response including OPTIONS preflights."""
+    if request.method == "OPTIONS":
+        response = Response(status_code=200)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Expose-Headers"] = "*"
+        return response
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        logger.error(f"Unhandled error handling request: {exc}", exc_info=True)
+        response = JSONResponse(
+            status_code=500,
+            content={"detail": "Internal Server Error", "error": str(exc)},
+        )
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Expose-Headers"] = "*"
+    return response
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Global exception handler guaranteeing CORS headers even on 500 error responses."""
+    logger.error(f"Global exception caught: {exc}", exc_info=True)
+    response = JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error", "error": str(exc)},
+    )
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Expose-Headers"] = "*"
+    return response
 
 # Attach Service Routers
 app.include_router(dynamic_option_chain_router)

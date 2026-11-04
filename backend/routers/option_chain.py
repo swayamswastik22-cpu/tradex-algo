@@ -10,6 +10,7 @@ import sys
 import json
 import math
 import logging
+import gc
 from datetime import datetime, date, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 from collections import defaultdict
@@ -62,6 +63,8 @@ def _ensure_scrip_master_indexed():
             clean_name = name.replace("-EQ", "").strip()
             NFO_INDEX[clean_name].append(item)
 
+        del instruments
+        gc.collect()
         SCRIP_MASTER_LOADED = True
         logger.info(f"Successfully indexed NFO contracts for {len(NFO_INDEX)} symbols.")
     except Exception as ex:
