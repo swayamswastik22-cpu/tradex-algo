@@ -550,6 +550,20 @@
             const isUp = b.change >= 0;
             document.getElementById("card-banknifty-chg").innerHTML = `<span class="${isUp ? 'text-emerald-400' : 'text-rose-400'}">${isUp ? '+' : ''}₹${b.change.toFixed(2)} (${isUp ? '+' : ''}${b.change_pct.toFixed(2)}%)</span>`;
           }
+          // SENSEX
+          if (data.ticker_data["SENSEX"]) {
+            const s = data.ticker_data["SENSEX"];
+            document.getElementById("card-sensex-ltp").innerText = `₹${s.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
+            const isUp = s.change >= 0;
+            document.getElementById("card-sensex-chg").innerHTML = `<span class="${isUp ? 'text-emerald-400' : 'text-rose-400'}">${isUp ? '+' : ''}₹${s.change.toFixed(2)} (${isUp ? '+' : ''}${s.change_pct.toFixed(2)}%)</span>`;
+          }
+          // INDIA VIX
+          if (data.ticker_data["INDIA VIX"]) {
+            const v = data.ticker_data["INDIA VIX"];
+            document.getElementById("card-vix-ltp").innerText = `${v.ltp.toFixed(2)}`;
+            const isUp = v.change >= 0;
+            document.getElementById("card-vix-chg").innerHTML = `<span class="${isUp ? 'text-rose-400' : 'text-emerald-400'}">${isUp ? '+' : ''}${v.change.toFixed(2)} (${isUp ? '+' : ''}${v.change_pct.toFixed(2)}%)</span>`;
+          }
         }
 
         // Portfolio Stats
@@ -973,11 +987,17 @@
         return `<tr class="hover:bg-slate-850 transition ${isATM ? 'bg-amber-950/30 border-y border-amber-500/50' : ''}">
           <td class="py-2 px-3 font-mono text-slate-400 text-xs">${(ce.oi || 0).toLocaleString()}</td>
           <td class="py-2 px-3 font-mono text-xs ${(ce.change_oi || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${(ce.change_oi || 0) >= 0 ? '+' : ''}${(ce.change_oi || 0).toLocaleString()}</td>
-          <td class="py-2 px-3 font-mono font-bold text-rose-300 cursor-pointer hover:underline text-xs" onclick="selectOptionForOrder('${oc.symbol}', ${s.strike}, 'CALL', ${ce.ltp || 0})">₹${(ce.ltp || 0).toFixed(2)}</td>
+          <td class="py-2 px-3 font-mono font-bold text-rose-300 cursor-pointer hover:underline text-xs" onclick="selectOptionForOrder('${oc.symbol}', ${s.strike}, 'CALL', ${ce.ltp || 0})">
+            <div>₹${(ce.ltp || 0).toFixed(2)}</div>
+            <div class="text-[10px] font-bold ${(ce.pct_change || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${(ce.pct_change || 0) >= 0 ? '+' : ''}${(ce.pct_change || 0).toFixed(1)}%</div>
+          </td>
           <td class="py-2 px-3 font-mono font-black text-center ${isATM ? 'bg-amber-500/20 text-amber-300 ring-1 ring-amber-400/50 rounded' : 'bg-slate-800/60 text-slate-100'} text-xs">
             ₹${s.strike} ${isATM ? '<span class="text-[9px] px-1 rounded bg-amber-400 text-slate-950 font-bold ml-1">ATM</span>' : ''}
           </td>
-          <td class="py-2 px-3 font-mono font-bold text-emerald-300 cursor-pointer hover:underline text-xs" onclick="selectOptionForOrder('${oc.symbol}', ${s.strike}, 'PUT', ${pe.ltp || 0})">₹${(pe.ltp || 0).toFixed(2)}</td>
+          <td class="py-2 px-3 font-mono font-bold text-emerald-300 cursor-pointer hover:underline text-xs" onclick="selectOptionForOrder('${oc.symbol}', ${s.strike}, 'PUT', ${pe.ltp || 0})">
+            <div>₹${(pe.ltp || 0).toFixed(2)}</div>
+            <div class="text-[10px] font-bold ${(pe.pct_change || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${(pe.pct_change || 0) >= 0 ? '+' : ''}${(pe.pct_change || 0).toFixed(1)}%</div>
+          </td>
           <td class="py-2 px-3 font-mono text-xs ${(pe.change_oi || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${(pe.change_oi || 0) >= 0 ? '+' : ''}${(pe.change_oi || 0).toLocaleString()}</td>
           <td class="py-2 px-3 font-mono text-slate-400 text-xs">${(pe.oi || 0).toLocaleString()}</td>
           <td class="py-2 px-3 text-right">

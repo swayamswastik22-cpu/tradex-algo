@@ -235,16 +235,27 @@ def _fetch_nfo_batch_quotes(tokens: List[str]) -> Dict[str, Dict[str, Any]]:
                     close_p = float(item.get("close") or 0.0)
                     oi = int(item.get("opnInterest") or 0)
                     net_chg = float(item.get("netChange") if item.get("netChange") is not None else (ltp - close_p))
+                    pct_chg = float(item.get("percentChange") if item.get("percentChange") is not None else (round(((ltp - close_p) / close_p) * 100, 2) if close_p > 0 else 0.0))
                     vol = int(item.get("tradeVolume") or 0)
 
                     record = {
                         "token": tok,
                         "symbol": trading_sym,
                         "ltp": ltp,
+                        "current_price": ltp,
                         "close": close_p,
+                        "prev_close": close_p,
+                        "previous_close": close_p,
                         "oi": oi,
                         "change_oi": int(oi * 0.04) if oi > 0 else 0,
+                        "change_in_oi": int(oi * 0.04) if oi > 0 else 0,
+                        "change": round(net_chg, 2),
                         "net_change": round(net_chg, 2),
+                        "netChange": round(net_chg, 2),
+                        "pct_change": round(pct_chg, 2),
+                        "change_pct": round(pct_chg, 2),
+                        "percent_change": round(pct_chg, 2),
+                        "percentChange": round(pct_chg, 2),
                         "volume": vol,
                     }
                     fetched_quotes[tok] = record
@@ -400,6 +411,8 @@ def get_live_option_chain(
         ce_chg_oi = int(ce_st.get("change_oi") or ce_st.get("change_in_oi") or (ce_oi * 0.06 * (1.0 if strike > spot else -0.5)))
         ce_vol = int(ce_st.get("volume") or (ce_oi * 0.45))
         ce_net_chg = float(ce_st.get("net_change") or ce_st.get("change") or 0.0)
+        ce_close = float(ce_st.get("close") or ce_st.get("prev_close") or (ce_ltp - ce_net_chg if ce_net_chg else ce_ltp))
+        ce_pct_chg = float(ce_st.get("pct_change") or ce_st.get("percentChange") or (round(((ce_ltp - ce_close) / ce_close) * 100, 2) if ce_close > 0 else 0.0))
 
         # 2. PUT (PE) Data
         pe_tok = str(pe_item.get("token", "")).strip() if pe_item else None
@@ -417,6 +430,8 @@ def get_live_option_chain(
         pe_chg_oi = int(pe_st.get("change_oi") or pe_st.get("change_in_oi") or (pe_oi * 0.06 * (1.0 if strike < spot else -0.5)))
         pe_vol = int(pe_st.get("volume") or (pe_oi * 0.45))
         pe_net_chg = float(pe_st.get("net_change") or pe_st.get("change") or 0.0)
+        pe_close = float(pe_st.get("close") or pe_st.get("prev_close") or (pe_ltp - pe_net_chg if pe_net_chg else pe_ltp))
+        pe_pct_chg = float(pe_st.get("pct_change") or pe_st.get("percentChange") or (round(((pe_ltp - pe_close) / pe_close) * 100, 2) if pe_close > 0 else 0.0))
 
         total_call_oi += ce_oi
         total_put_oi += pe_oi
@@ -430,23 +445,37 @@ def get_live_option_chain(
                 "symbol": ce_sym,
                 "token": ce_tok,
                 "ltp": round(ce_ltp, 2),
+                "close": round(ce_close, 2),
+                "prev_close": round(ce_close, 2),
                 "oi": ce_oi,
                 "change_oi": ce_chg_oi,
                 "change_in_oi": ce_chg_oi,
                 "volume": ce_vol,
                 "iv": dist_iv,
-                "net_change": ce_net_chg,
+                "net_change": round(ce_net_chg, 2),
+                "change": round(ce_net_chg, 2),
+                "pct_change": round(ce_pct_chg, 2),
+                "change_pct": round(ce_pct_chg, 2),
+                "percent_change": round(ce_pct_chg, 2),
+                "percentChange": round(ce_pct_chg, 2),
             },
             "pe": {
                 "symbol": pe_sym,
                 "token": pe_tok,
                 "ltp": round(pe_ltp, 2),
+                "close": round(pe_close, 2),
+                "prev_close": round(pe_close, 2),
                 "oi": pe_oi,
                 "change_oi": pe_chg_oi,
                 "change_in_oi": pe_chg_oi,
                 "volume": pe_vol,
                 "iv": dist_iv,
-                "net_change": pe_net_chg,
+                "net_change": round(pe_net_chg, 2),
+                "change": round(pe_net_chg, 2),
+                "pct_change": round(pe_pct_chg, 2),
+                "change_pct": round(pe_pct_chg, 2),
+                "percent_change": round(pe_pct_chg, 2),
+                "percentChange": round(pe_pct_chg, 2),
             },
         }
         strikes_list.append(strike_data)
@@ -459,19 +488,35 @@ def get_live_option_chain(
                 "symbol": ce_sym,
                 "token": ce_tok,
                 "ltp": round(ce_ltp, 2),
+                "close": round(ce_close, 2),
+                "prev_close": round(ce_close, 2),
                 "oi": ce_oi,
                 "change_in_oi": ce_chg_oi,
                 "volume": ce_vol,
                 "iv": dist_iv,
+                "net_change": round(ce_net_chg, 2),
+                "change": round(ce_net_chg, 2),
+                "pct_change": round(ce_pct_chg, 2),
+                "change_pct": round(ce_pct_chg, 2),
+                "percent_change": round(ce_pct_chg, 2),
+                "percentChange": round(ce_pct_chg, 2),
             },
             "put": {
                 "symbol": pe_sym,
                 "token": pe_tok,
                 "ltp": round(pe_ltp, 2),
+                "close": round(pe_close, 2),
+                "prev_close": round(pe_close, 2),
                 "oi": pe_oi,
                 "change_in_oi": pe_chg_oi,
                 "volume": pe_vol,
                 "iv": dist_iv,
+                "net_change": round(pe_net_chg, 2),
+                "change": round(pe_net_chg, 2),
+                "pct_change": round(pe_pct_chg, 2),
+                "change_pct": round(pe_pct_chg, 2),
+                "percent_change": round(pe_pct_chg, 2),
+                "percentChange": round(pe_pct_chg, 2),
             },
         })
 

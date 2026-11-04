@@ -525,9 +525,10 @@ class AngelOneWebSocketManager:
                             self.latest_prices[token] = price_val
 
                             if close_price_val and close_price_val > 0:
-                                self.previous_closes[sym] = close_price_val
-                                self.previous_closes[token] = close_price_val
-                                PREVIOUS_CLOSES[sym] = close_price_val
+                                if (sym not in self.previous_closes) or (abs(close_price_val - price_val) > 0.001):
+                                    self.previous_closes[sym] = close_price_val
+                                    self.previous_closes[token] = close_price_val
+                                    PREVIOUS_CLOSES[sym] = close_price_val
 
                             st = self.market_state.get(sym) or {}
                             prev_close = (
@@ -538,8 +539,9 @@ class AngelOneWebSocketManager:
                                 or st.get("prev_close")
                                 or st.get("close")
                                 or st.get("previous_close")
-                                or price_val
                             )
+                            if not prev_close or prev_close <= 0:
+                                prev_close = close_price_val if (close_price_val and close_price_val > 0) else price_val
                             final_high = day_high if day_high else max(price_val, prev_close)
                             final_low = day_low if day_low else min(price_val, prev_close)
                             chg = round(price_val - prev_close, 2)
@@ -657,6 +659,106 @@ class AngelOneWebSocketManager:
 
         if not tokens:
             return
+
+        # 1. Fetch Official Index Quotes (NIFTY, BANKNIFTY, SENSEX, INDIA VIX)
+        try:
+            # NSE Indices: NIFTY (26000, 99926000), BANKNIFTY (26009, 99926009), INDIA VIX (99926017)
+            idx_resp_nse = angel_auth.smart_api.getMarketData("FULL", {"NSE": ["26000", "99926000", "26009", "99926009", "99926017"]})
+            if idx_resp_nse and idx_resp_nse.get("status") and idx_resp_nse.get("data", {}).get("fetched"):
+                for item in idx_resp_nse["data"]["fetched"]:
+                    tok = str(item.get("symbolToken", "")).strip()
+                    trading_sym = str(item.get("tradingSymbol", "")).strip().upper()
+                    idx_name = "NIFTY" if tok in ["26000", "99926000"] or "NIFTY 50" in trading_sym or trading_sym == "NIFTY" else (
+                        "BANKNIFTY" if tok in ["26009", "99926009"] or "BANK" in trading_sym else (
+                            "INDIA VIX" if tok in ["99926017", "26017"] or "VIX" in trading_sym else trading_sym
+                        )
+                    )
+                    ltp = float(item.get("ltp") or 0.0)
+                    close_p = float(item.get("close") or 0.0)
+                    if close_p <= 0:
+                        close_p = ltp
+                    net_chg = float(item.get("netChange") if item.get("netChange") is not None else (ltp - close_p))
+                    pct_chg = float(item.get("percentChange") if item.get("percentChange") is not None else (round(((ltp - close_p) / close_p) * 100, 2) if close_p > 0 else 0.0))
+
+                    self.latest_prices[idx_name] = ltp
+                    self.latest_prices[tok] = ltp
+                    self.previous_closes[idx_name] = close_p
+                    self.previous_closes[tok] = close_p
+                    PREVIOUS_CLOSES[idx_name] = close_p
+
+                    rec = {
+                        "token": tok,
+                        "symbol": idx_name,
+                        "ltp": ltp,
+                        "current_price": ltp,
+                        "open": float(item.get("open") or ltp),
+                        "high": float(item.get("high") or ltp),
+                        "low": float(item.get("low") or ltp),
+                        "close": close_p,
+                        "prev_close": close_p,
+                        "previous_close": close_p,
+                        "change": round(net_chg, 2),
+                        "net_change": round(net_chg, 2),
+                        "netChange": round(net_chg, 2),
+                        "pct_change": round(pct_chg, 2),
+                        "change_pct": round(pct_chg, 2),
+                        "percent_change": round(pct_chg, 2),
+                        "percentChange": round(pct_chg, 2),
+                        "volume": int(item.get("tradeVolume") or 0),
+                        "last_tick_time": datetime.now().isoformat(),
+                        "feed_source": "Angel One REST MarketData (Live Index)",
+                    }
+                    self.market_state[idx_name] = rec
+                    self.market_state[tok] = rec
+        except Exception as ex:
+            logger.debug(f"NSE Index quote fetch note: {ex}")
+
+        try:
+            # BSE Indices: SENSEX (99919000, 1)
+            idx_resp_bse = angel_auth.smart_api.getMarketData("FULL", {"BSE": ["99919000", "1"]})
+            if idx_resp_bse and idx_resp_bse.get("status") and idx_resp_bse.get("data", {}).get("fetched"):
+                for item in idx_resp_bse["data"]["fetched"]:
+                    tok = str(item.get("symbolToken", "")).strip()
+                    idx_name = "SENSEX"
+                    ltp = float(item.get("ltp") or 0.0)
+                    close_p = float(item.get("close") or 0.0)
+                    if close_p <= 0:
+                        close_p = ltp
+                    net_chg = float(item.get("netChange") if item.get("netChange") is not None else (ltp - close_p))
+                    pct_chg = float(item.get("percentChange") if item.get("percentChange") is not None else (round(((ltp - close_p) / close_p) * 100, 2) if close_p > 0 else 0.0))
+
+                    self.latest_prices[idx_name] = ltp
+                    self.latest_prices[tok] = ltp
+                    self.previous_closes[idx_name] = close_p
+                    self.previous_closes[tok] = close_p
+                    PREVIOUS_CLOSES[idx_name] = close_p
+
+                    rec = {
+                        "token": tok,
+                        "symbol": idx_name,
+                        "ltp": ltp,
+                        "current_price": ltp,
+                        "open": float(item.get("open") or ltp),
+                        "high": float(item.get("high") or ltp),
+                        "low": float(item.get("low") or ltp),
+                        "close": close_p,
+                        "prev_close": close_p,
+                        "previous_close": close_p,
+                        "change": round(net_chg, 2),
+                        "net_change": round(net_chg, 2),
+                        "netChange": round(net_chg, 2),
+                        "pct_change": round(pct_chg, 2),
+                        "change_pct": round(pct_chg, 2),
+                        "percent_change": round(pct_chg, 2),
+                        "percentChange": round(pct_chg, 2),
+                        "volume": int(item.get("tradeVolume") or 0),
+                        "last_tick_time": datetime.now().isoformat(),
+                        "feed_source": "Angel One REST MarketData (Live Index)",
+                    }
+                    self.market_state[idx_name] = rec
+                    self.market_state[tok] = rec
+        except Exception as ex:
+            logger.debug(f"BSE Index quote fetch note: {ex}")
 
         def chunks(lst, n):
             for i in range(0, len(lst), n):
@@ -1189,9 +1291,9 @@ def get_system_state():
     ticker_data = {}
     for sym, ltp in live_prices.items():
         st = feed_manager.market_state.get(sym, {})
-        prev_close = st.get("prev_close") or feed_manager.previous_closes.get(sym) or PREVIOUS_CLOSES.get(sym, ltp)
-        chg = st.get("change") if st.get("change") is not None else round(ltp - prev_close, 2)
-        chg_pct = st.get("percent_change") if st.get("percent_change") is not None else (round((chg / prev_close) * 100, 2) if prev_close > 0 else 0.0)
+        prev_close = st.get("prev_close") or st.get("close") or feed_manager.previous_closes.get(sym) or PREVIOUS_CLOSES.get(sym, ltp)
+        chg = st.get("change") if st.get("change") is not None else (st.get("net_change") if st.get("net_change") is not None else round(ltp - prev_close, 2))
+        chg_pct = st.get("pct_change") if st.get("pct_change") is not None else (st.get("percent_change") if st.get("percent_change") is not None else (round((chg / prev_close) * 100, 2) if prev_close > 0 else 0.0))
         ticker_data[sym] = {
             "symbol": sym,
             "ltp": ltp,
