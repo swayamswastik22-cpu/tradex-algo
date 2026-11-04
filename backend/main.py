@@ -549,18 +549,41 @@ async def websocket_stream_endpoint(websocket: WebSocket):
 
 
 # ==========================================================
-# Root & Terminal Endpoints
+# Root & Health Endpoints (Supporting HEAD for UptimeRobot)
 # ==========================================================
 TERMINAL_HTML_PATH = os.path.join(CURRENT_DIR, "templates", "terminal.html")
 
-@app.get("/", tags=["General"])
-def root(request: Request, format: Optional[str] = Query(default=None)):
-    """Serves the TRADEx-ALGO Live Terminal to web browsers, or JSON to API clients."""
-    accept_header = request.headers.get("accept", "")
-    if format != "json" and ("text/html" in accept_header or "*/*" in accept_header):
+@app.api_route("/", methods=["GET", "HEAD"], tags=["General"])
+async def root(request: Request = None, format: Optional[str] = Query(default=None)):
+    """Handles GET and HEAD for root route (UptimeRobot monitor)."""
+    if request and request.method == "HEAD":
+        return JSONResponse({"status": "online"})
+    accept_header = request.headers.get("accept", "") if request else ""
+    if format != "json" and ("text/html" in accept_header):
         if os.path.exists(TERMINAL_HTML_PATH):
             with open(TERMINAL_HTML_PATH, "r", encoding="utf-8") as f:
                 return HTMLResponse(content=f.read())
+    return {"status": "online"}
+
+
+@app.api_route("/health", methods=["GET", "HEAD"], tags=["General"])
+@app.api_route("/api/health", methods=["GET", "HEAD"], tags=["General"])
+async def health_check():
+    """Handles GET and HEAD for health checks (UptimeRobot monitor)."""
+    return {"status": "healthy"}
+
+
+@app.get("/terminal", response_class=HTMLResponse, tags=["General"])
+def terminal_page():
+    """Serves the rich interactive TRADEx-ALGO Live Terminal & Copy Trader."""
+    if os.path.exists(TERMINAL_HTML_PATH):
+        with open(TERMINAL_HTML_PATH, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    return HTMLResponse("<h1>Terminal HTML not found</h1>", status_code=404)
+
+
+@app.get("/api", tags=["General"])
+def api_endpoints_schema():
     return {
         "name": "Indian Algo Trader Backend",
         "version": "2.0.0",
@@ -585,40 +608,6 @@ def root(request: Request, format: Optional[str] = Query(default=None)):
             "paper_oms_portfolio": "/api/paper/portfolio",
             "optopsy_simulate": "/api/optopsy-simulate",
             "health": "/health",
-        },
-    }
-
-
-@app.get("/terminal", response_class=HTMLResponse, tags=["General"])
-def terminal_page():
-    """Serves the rich interactive TRADEx-ALGO Live Terminal & Copy Trader."""
-    if os.path.exists(TERMINAL_HTML_PATH):
-        with open(TERMINAL_HTML_PATH, "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
-    return HTMLResponse("<h1>Terminal HTML not found</h1>", status_code=404)
-
-
-@app.get("/api", tags=["General"])
-def api_endpoints_schema():
-    return root(Request({"type": "http", "headers": []}), format="json")
-
-
-@app.get("/health", tags=["General"])
-@app.get("/api/health", tags=["General"])
-def health_check():
-    """System health check endpoint for monitoring and Hugging Face Spaces."""
-    uptime = int(time.time() - APP_START_TIME)
-    return {
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "uptime_seconds": uptime,
-        "environment": "production",
-        "services": {
-            "option_chain_service": "ONLINE (Headless NSE API + OI Math)",
-            "day_trader_nse": "ONLINE (15-min ORB + VWAP + 1x ATR SL + 1.5R/2.5R)",
-            "paper_oms": "ONLINE (100% Virtual OMS; Live Broker placeOrder Forbidden)",
-            "backtester": "ONLINE (Optopsy Strategy Engine)",
-            "angel_one_feed": f"ONLINE ({feed_manager.mode} Mode)",
         },
     }
 
