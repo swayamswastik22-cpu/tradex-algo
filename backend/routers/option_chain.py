@@ -18,6 +18,11 @@ from collections import defaultdict
 from fastapi import APIRouter, Query, HTTPException
 
 logger = logging.getLogger("option_chain_router")
+try:
+    import logzero
+    logzero.loglevel(logging.CRITICAL)
+except Exception:
+    pass
 router = APIRouter(prefix="/api", tags=["Option Chain"])
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -202,10 +207,10 @@ def _fetch_nfo_batch_quotes(tokens: List[str]) -> Dict[str, Dict[str, Any]]:
     feed = getattr(main_mod, "feed_manager", None) if main_mod else None
 
     from services.angel_auth import angel_auth
-    if not angel_auth.smart_api or not angel_auth.jwt_token:
+    if not angel_auth.smart_api or not getattr(angel_auth.smart_api, "access_token", None):
         angel_auth.generate_session()
 
-    if not angel_auth.smart_api:
+    if not angel_auth.smart_api or not getattr(angel_auth.smart_api, "access_token", None):
         return {}
 
     fetched_quotes: Dict[str, Dict[str, Any]] = {}

@@ -7,11 +7,20 @@ and extraction of fresh jwtToken, refreshToken, and feedToken.
 import os
 import time
 import logging
+import threading
 from typing import Dict, Any, Optional, List
 
 import pyotp
 from SmartApi import SmartConnect
 from dotenv import load_dotenv
+
+# Suppress noisy internal error logs from smartConnect library
+logging.getLogger("smartConnect").setLevel(logging.CRITICAL)
+try:
+    import logzero
+    logzero.loglevel(logging.CRITICAL)
+except Exception:
+    pass
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 BACKEND_DIR = os.path.dirname(CURRENT_DIR)
@@ -38,6 +47,7 @@ class AngelAuthManager:
     """Manages dynamic authentication session generation for Angel One SmartAPI and SmartWebSocketV2."""
 
     def __init__(self):
+        self._auth_lock = threading.Lock()
         self.api_key: str = ""
         self.client_code: str = ""
         self.pin: str = ""
@@ -85,67 +95,99 @@ class AngelAuthManager:
         return configured
 
     def generate_session(self) -> Dict[str, Any]:
-        """Dynamically logs into Angel One using fresh TOTP and returns fresh tokens."""
-        self.reload_env()
-        if not self.is_configured():
-            logger.warning(f"Angel One credentials missing or incomplete: {self.last_error_msg}")
-            self.logged_in = False
-            return {"status": False, "message": self.last_error_msg}
-
-        try:
-            logger.info("Generating dynamic Angel One session with fresh TOTP...")
-            totp = pyotp.TOTP(self.totp_secret).now()
-            self.smart_api = SmartConnect(api_key=self.api_key)
-            session = self.smart_api.generateSession(self.client_code, self.pin, totp)
-
-            if not session or not session.get("status"):
-                msg = session.get("message") if session else "Empty session response"
-                self.last_error_msg = str(msg)
+        """Dynamically logs into Angel One using fresh TOTP and returns fresh tokens (Thread-safe & Atomic)."""
+        with self._auth_lock:
+            self.reload_env()
+            if not self.is_configured():
+                logger.warning(f"Angel One credentials missing or incomplete: {self.last_error_msg}")
                 self.logged_in = False
-                logger.error(f"Angel One session generation failed: {msg}")
-                return {"status": False, "message": msg}
+                return {"status": False, "message": self.last_error_msg}
 
-            data = session.get("data", {})
-            self.jwt_token = data.get("jwtToken", "")
-            clean_jwt = self.jwt_token.replace("Bearer ", "").strip()
-            if self.smart_api:
-                self.smart_api.setAccessToken(clean_jwt)
-            self.refresh_token = data.get("refreshToken", "")
-            self.feed_token = data.get("feedToken", "")
-            self.user_name = data.get("name", "Angel One Client")
-            self.last_login_time = time.time()
-            self.last_error_msg = ""
-            self.logged_in = True
-            self.session_data = data
+            # If logged in recently (<45s) and smart_api has a valid access_token, reuse it
+            now = time.time()
+            if self.logged_in and self.smart_api and getattr(self.smart_api, "access_token", None) and (now - self.last_login_time < 45):
+                return {
+                    "status": True,
+                    "jwtToken": self.jwt_token,
+                    "refreshToken": self.refresh_token,
+                    "feedToken": self.feed_token,
+                    "name": self.user_name,
+                    "client_code": self.client_code,
+                    "api_key": self.api_key,
+                }
 
-            # If feedToken is missing in login payload, fetch explicitly
-            if not self.feed_token and self.smart_api:
-                try:
-                    feed_resp = self.smart_api.getfeedToken()
-                    if feed_resp and feed_resp.get("status"):
-                        self.feed_token = feed_resp.get("data", "")
-                except Exception as ex:
-                    logger.warning(f"Could not retrieve feedToken via getfeedToken: {ex}")
+            try:
+                logger.info("Generating dynamic Angel One session with fresh TOTP...")
+                totp = pyotp.TOTP(self.totp_secret).now()
+                new_api = SmartConnect(api_key=self.api_key)
+                session = new_api.generateSession(self.client_code, self.pin, totp)
 
-            logger.info(
-                f"Angel One Authentication successful for: {self.user_name} ({self.client_code}) | "
-                f"FeedToken: {'Available' if self.feed_token else 'Missing'}"
-            )
+                if not session or not session.get("status"):
+                    msg = session.get("message") if session else "Empty session response"
+                    self.last_error_msg = str(msg)
+                    logger.warning(f"Angel One session generation notice: {msg}")
+                    # If we already have a functioning smart_api, do not destroy it on a rate-limit hiccup
+                    if self.smart_api and getattr(self.smart_api, "access_token", None):
+                        return {
+                            "status": True,
+                            "jwtToken": self.jwt_token,
+                            "refreshToken": self.refresh_token,
+                            "feedToken": self.feed_token,
+                            "name": self.user_name,
+                            "client_code": self.client_code,
+                            "api_key": self.api_key,
+                        }
+                    self.logged_in = False
+                    return {"status": False, "message": msg}
 
-            return {
-                "status": True,
-                "jwtToken": self.jwt_token,
-                "refreshToken": self.refresh_token,
-                "feedToken": self.feed_token,
-                "name": self.user_name,
-                "client_code": self.client_code,
-                "api_key": self.api_key,
-            }
-        except Exception as e:
-            self.last_error_msg = str(e)
-            self.logged_in = False
-            logger.error(f"Angel One TOTP login error: {e}", exc_info=True)
-            return {"status": False, "message": str(e)}
+                data = session.get("data", {})
+                raw_jwt = data.get("jwtToken", "")
+                clean_jwt = raw_jwt.replace("Bearer ", "").strip()
+                new_api.setAccessToken(clean_jwt)
+
+                refresh_token = data.get("refreshToken", "")
+                feed_token = data.get("feedToken", "")
+                user_name = data.get("name", "Angel One Client")
+
+                if not feed_token:
+                    try:
+                        feed_resp = new_api.getfeedToken()
+                        if feed_resp and feed_resp.get("status"):
+                            feed_token = feed_resp.get("data", "")
+                    except Exception as ex:
+                        logger.warning(f"Could not retrieve feedToken via getfeedToken: {ex}")
+
+                # ATOMIC ASSIGNMENT: Only swap self.smart_api when new session is 100% authenticated & access_token is set
+                self.smart_api = new_api
+                self.jwt_token = clean_jwt
+                self.refresh_token = refresh_token
+                self.feed_token = feed_token
+                self.user_name = user_name
+                self.last_login_time = time.time()
+                self.last_error_msg = ""
+                self.logged_in = True
+                self.session_data = data
+
+                logger.info(
+                    f"Angel One Authentication successful for: {self.user_name} ({self.client_code}) | "
+                    f"FeedToken: {'Available' if self.feed_token else 'Missing'}"
+                )
+
+                return {
+                    "status": True,
+                    "jwtToken": self.jwt_token,
+                    "refreshToken": self.refresh_token,
+                    "feedToken": self.feed_token,
+                    "name": self.user_name,
+                    "client_code": self.client_code,
+                    "api_key": self.api_key,
+                }
+            except Exception as e:
+                self.last_error_msg = str(e)
+                if not (self.smart_api and getattr(self.smart_api, "access_token", None)):
+                    self.logged_in = False
+                logger.error(f"Angel One TOTP login error: {e}", exc_info=True)
+                return {"status": False, "message": str(e)}
 
     def refresh_session(self) -> bool:
         """Refreshes the JWT token using refreshToken."""
@@ -156,8 +198,13 @@ class AngelAuthManager:
             resp = self.smart_api.generateToken(self.refresh_token)
             if resp and resp.get("status"):
                 data = resp.get("data", {})
-                self.jwt_token = data.get("jwtToken", self.jwt_token)
+                raw_jwt = data.get("jwtToken", self.jwt_token)
+                clean_jwt = raw_jwt.replace("Bearer ", "").strip()
+                self.jwt_token = clean_jwt
+                if self.smart_api:
+                    self.smart_api.setAccessToken(clean_jwt)
                 self.feed_token = data.get("feedToken", self.feed_token)
+                self.last_login_time = time.time()
                 logger.info("Angel One session token refreshed successfully.")
                 return True
         except Exception as ex:

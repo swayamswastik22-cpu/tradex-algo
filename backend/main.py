@@ -27,6 +27,14 @@ from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect, Request, Res
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
 
+# Suppress noisy internal error logs from smartConnect library
+logging.getLogger("smartConnect").setLevel(logging.CRITICAL)
+try:
+    import logzero
+    logzero.loglevel(logging.CRITICAL)
+except Exception:
+    pass
+
 # Ensure backend folder is on python path
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
@@ -634,9 +642,9 @@ class AngelOneWebSocketManager:
 
     def fetch_live_market_quotes_batch(self):
         """Fetches real-time market quotes via Angel One REST API getMarketData for all 218 FNO stocks in chunks of 45."""
-        if not angel_auth.smart_api or not angel_auth.jwt_token:
+        if not angel_auth.smart_api or not getattr(angel_auth.smart_api, "access_token", None):
             angel_auth.generate_session()
-        if not angel_auth.smart_api:
+        if not angel_auth.smart_api or not getattr(angel_auth.smart_api, "access_token", None):
             return
 
         tokens = self.resolved_integer_tokens.get("NSE", [])
