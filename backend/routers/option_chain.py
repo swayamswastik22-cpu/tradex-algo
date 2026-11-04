@@ -198,17 +198,29 @@ def _approx_bs_price(spot: float, strike: float, dte_days: float, is_call: bool,
     return max(round(price, 2), 0.05)
 
 
+# In-memory quote cache to avoid hitting Angel One rate limits
+_NFO_QUOTE_CACHE: Dict[str, Tuple[float, Dict[str, Dict[str, Any]]]] = {}
+
 def _fetch_nfo_batch_quotes(tokens: List[str]) -> Dict[str, Dict[str, Any]]:
-    """Fetches batch market quotes from Angel One REST API for NFO option tokens."""
+    """Fetches batch market quotes from Angel One REST API for NFO option tokens (cached for 10s)."""
     if not tokens:
         return {}
+
+    cache_key = ",".join(sorted(tokens[:20]))
+    now_t = time.time()
+    if cache_key in _NFO_QUOTE_CACHE:
+        cached_ts, cached_data = _NFO_QUOTE_CACHE[cache_key]
+        if now_t - cached_ts < 10.0:
+            return cached_data
 
     main_mod = sys.modules.get("main") or sys.modules.get("backend.main")
     feed = getattr(main_mod, "feed_manager", None) if main_mod else None
 
     from services.angel_auth import angel_auth
-    if not angel_auth.smart_api or not getattr(angel_auth.smart_api, "access_token", None):
-        angel_auth.generate_session()
+    if not angel_auth.smart_api or not getattr(angel_auth.smart_api, "access_token", None) or not angel_auth.logged_in:
+        auth_res = angel_auth.generate_session()
+        if not auth_res.get("status"):
+            return {}
 
     if not angel_auth.smart_api or not getattr(angel_auth.smart_api, "access_token", None):
         return {}
@@ -223,9 +235,16 @@ def _fetch_nfo_batch_quotes(tokens: List[str]) -> Dict[str, Dict[str, Any]]:
 
     def fetch_chunk(chunk):
         res_items = []
+        if not angel_auth.logged_in:
+            return []
         try:
             resp = angel_auth.smart_api.getMarketData("FULL", {"NFO": chunk})
             if resp and not resp.get("status"):
+                err_code = str(resp.get("errorCode", "") or resp.get("errorcode", "")).upper()
+                msg = str(resp.get("message", "")).lower()
+                if err_code in ["AG8003", "AG8001", "AB1004"] or "token missing" in msg:
+                    angel_auth.logged_in = False
+                    return []
                 if angel_auth.handle_api_response(resp):
                     resp = angel_auth.smart_api.getMarketData("FULL", {"NFO": chunk})
             if resp and resp.get("status") and resp.get("data", {}).get("fetched"):
@@ -277,6 +296,9 @@ def _fetch_nfo_batch_quotes(tokens: List[str]) -> Dict[str, Dict[str, Any]]:
                     feed.market_state[trading_sym] = record
                     feed.latest_prices[tok] = ltp
                     feed.latest_prices[trading_sym] = ltp
+
+    if fetched_quotes:
+        _NFO_QUOTE_CACHE[cache_key] = (now_t, fetched_quotes)
 
     return fetched_quotes
 

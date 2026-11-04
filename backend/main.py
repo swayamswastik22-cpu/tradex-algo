@@ -32,6 +32,7 @@ logging.getLogger("smartConnect").setLevel(logging.CRITICAL)
 try:
     import logzero
     logzero.loglevel(logging.CRITICAL)
+    logzero.logger.setLevel(logging.CRITICAL)
 except Exception:
     pass
 
@@ -652,8 +653,10 @@ class AngelOneWebSocketManager:
 
     def fetch_live_market_quotes_batch(self):
         """Fetches real-time market quotes via Angel One REST API getMarketData for all 218 FNO stocks in chunks of 45."""
-        if not angel_auth.smart_api or not getattr(angel_auth.smart_api, "access_token", None):
-            angel_auth.generate_session()
+        if not angel_auth.smart_api or not getattr(angel_auth.smart_api, "access_token", None) or not angel_auth.logged_in:
+            auth_res = angel_auth.generate_session()
+            if not auth_res.get("status"):
+                return
         if not angel_auth.smart_api or not getattr(angel_auth.smart_api, "access_token", None):
             return
 
@@ -773,11 +776,20 @@ class AngelOneWebSocketManager:
                 yield lst[i:i + n]
 
         for chunk in chunks(tokens, 45):
+            if not angel_auth.logged_in:
+                break
             try:
                 token_strs = [str(t) for t in chunk]
                 resp = angel_auth.smart_api.getMarketData("FULL", {"NSE": token_strs})
                 if resp and not resp.get("status"):
-                    if angel_auth.handle_api_response(resp):
+                    err_code = str(resp.get("errorCode", "") or resp.get("errorcode", "")).upper()
+                    msg = str(resp.get("message", "")).lower()
+                    if err_code in ["AG8003", "AG8001", "AB1004"] or "token missing" in msg or "invalid token" in msg:
+                        logger.warning(f"Angel One session expired ({err_code}). Breaking batch quote loop to re-authenticate.")
+                        angel_auth.logged_in = False
+                        angel_auth.handle_api_response(resp)
+                        break
+                    elif angel_auth.handle_api_response(resp):
                         resp = angel_auth.smart_api.getMarketData("FULL", {"NSE": token_strs})
                     else:
                         break
@@ -1206,16 +1218,27 @@ async def api_health_check(request: Request = None):
 
 
 TERMINAL_HTML_PATH = os.path.join(CURRENT_DIR, "templates", "terminal.html")
+TERMINAL_HTML_CONTENT = ""
+if os.path.exists(TERMINAL_HTML_PATH):
+    try:
+        with open(TERMINAL_HTML_PATH, "r", encoding="utf-8") as _f:
+            TERMINAL_HTML_CONTENT = _f.read()
+    except Exception as _e:
+        logger.warning(f"Terminal HTML pre-cache notice: {_e}")
 
-@app.get("/owner", response_class=HTMLResponse, tags=["Owner Portal"])
-@app.get("/admin", response_class=HTMLResponse, tags=["Owner Portal"])
-@app.get("/portal", response_class=HTMLResponse, tags=["Owner Portal"])
-@app.get("/terminal", response_class=HTMLResponse, tags=["Owner Portal"])
-def owner_portal_page():
+
+@app.api_route("/owner", methods=["GET", "HEAD"], response_class=HTMLResponse, tags=["Owner Portal"])
+@app.api_route("/admin", methods=["GET", "HEAD"], response_class=HTMLResponse, tags=["Owner Portal"])
+@app.api_route("/portal", methods=["GET", "HEAD"], response_class=HTMLResponse, tags=["Owner Portal"])
+@app.api_route("/terminal", methods=["GET", "HEAD"], response_class=HTMLResponse, tags=["Owner Portal"])
+async def owner_portal_page():
     """Private Owner Portal with dedicated PIN unlock section for authorized trading desk access."""
-    if os.path.exists(TERMINAL_HTML_PATH):
+    global TERMINAL_HTML_CONTENT
+    if not TERMINAL_HTML_CONTENT and os.path.exists(TERMINAL_HTML_PATH):
         with open(TERMINAL_HTML_PATH, "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
+            TERMINAL_HTML_CONTENT = f.read()
+    if TERMINAL_HTML_CONTENT:
+        return HTMLResponse(content=TERMINAL_HTML_CONTENT)
     return HTMLResponse("<h1>Owner portal template not found</h1>", status_code=404)
 
 
@@ -1270,7 +1293,7 @@ def api_endpoints_schema():
 
 
 @app.get("/api/state", tags=["General"])
-def get_system_state():
+async def get_system_state():
     """Returns current live system state, market hours, virtual paper OMS portfolio and prices."""
     now = datetime.now()
     uptime = int(time.time() - APP_START_TIME)

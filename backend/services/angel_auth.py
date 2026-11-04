@@ -19,6 +19,7 @@ logging.getLogger("smartConnect").setLevel(logging.CRITICAL)
 try:
     import logzero
     logzero.loglevel(logging.CRITICAL)
+    logzero.logger.setLevel(logging.CRITICAL)
 except Exception:
     pass
 
