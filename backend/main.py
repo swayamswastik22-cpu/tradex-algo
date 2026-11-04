@@ -487,11 +487,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS Middleware (allowing all origins *)
+# CORS Middleware (allowing all origins including AI Studio web app)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=False,
+    allow_origin_regex="https?://.*",
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )

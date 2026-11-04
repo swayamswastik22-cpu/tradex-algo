@@ -273,13 +273,21 @@ paper_engine = PaperTradingEngine()
 # 3. FastAPI Paper Trading Routes
 # ==========================================================
 class CreatePaperOrderRequest(BaseModel):
-    symbol: str = Field(..., example="RELIANCE")
-    side: str = Field(default="BUY", example="BUY")
-    quantity: int = Field(default=10, example=25)
-    entry_price: float = Field(..., example=2750.0)
-    stop_loss: float = Field(..., example=2730.0)
-    target_1: float = Field(..., example=2780.0)
-    target_2: Optional[float] = Field(default=2810.0, example=2810.0)
+    symbol: Optional[str] = None
+    ticker: Optional[str] = None
+    side: str = Field(default="BUY")
+    quantity: Optional[int] = None
+    qty: Optional[int] = None
+    shares: Optional[int] = None
+    entry_price: Optional[float] = None
+    price: Optional[float] = None
+    ltp: Optional[float] = None
+    stop_loss: Optional[float] = None
+    sl: Optional[float] = None
+    target_1: Optional[float] = None
+    target: Optional[float] = None
+    tgt: Optional[float] = None
+    target_2: Optional[float] = None
 
 
 class TickSimulationRequest(BaseModel):
@@ -290,19 +298,57 @@ class TickSimulationRequest(BaseModel):
 @router.post("/order")
 def create_paper_order(order: CreatePaperOrderRequest):
     """Executes a 100% virtual paper trade order. Live broker calls are prohibited."""
+    sym = (order.symbol or order.ticker or "RELIANCE").strip().upper()
+    side = (order.side or "BUY").strip().upper()
+    qty = order.quantity or order.qty or order.shares or 10
+
+    # Resolve entry price
+    entry = order.entry_price or order.price or order.ltp
+    if not entry or entry <= 0:
+        entry = paper_engine.live_prices.get(sym)
+    if not entry or entry <= 0:
+        try:
+            import sys
+            main_mod = sys.modules.get("main")
+            if main_mod and hasattr(main_mod, "feed_manager"):
+                entry = main_mod.feed_manager.latest_prices.get(sym)
+        except Exception:
+            pass
+    entry = round(float(entry or 1000.0), 2)
+
+    # Resolve Stop Loss & Targets
+    sl = order.stop_loss or order.sl
+    if not sl or sl <= 0 or sl >= entry:
+        sl = round(entry * 0.99, 2)
+    else:
+        sl = round(float(sl), 2)
+
+    risk = max(round(entry - sl, 2), round(entry * 0.005, 2))
+    t1 = order.target_1 or order.target or order.tgt
+    if not t1 or t1 <= entry:
+        t1 = round(entry + (risk * 1.5), 2)
+    else:
+        t1 = round(float(t1), 2)
+
+    t2 = order.target_2
+    if not t2 or t2 <= t1:
+        t2 = round(entry + (risk * 2.5), 2)
+    else:
+        t2 = round(float(t2), 2)
+
     try:
         record = paper_engine.create_order(
-            symbol=order.symbol,
-            side=order.side,
-            quantity=order.quantity,
-            entry_price=order.entry_price,
-            stop_loss=order.stop_loss,
-            target_1=order.target_1,
-            target_2=order.target_2,
+            symbol=sym,
+            side=side,
+            quantity=qty,
+            entry_price=entry,
+            stop_loss=sl,
+            target_1=t1,
+            target_2=t2,
         )
         return {
             "status": "success",
-            "message": "Virtual Paper Order successfully created.",
+            "message": f"Virtual Paper Order successfully created for {sym}.",
             "order": record.model_dump(),
         }
     except ValueError as e:
@@ -321,6 +367,17 @@ def list_positions(status: Optional[str] = Query(default=None, description="'OPE
     }
 
 
+class ClosePositionRequest(BaseModel):
+    position_id: Optional[str] = None
+    trade_id: Optional[str] = None
+    id: Optional[str] = None
+    exit_price: Optional[float] = None
+
+
+class CloseAllRequest(BaseModel):
+    reason: Optional[str] = "MANUAL_FLATTEN"
+
+
 @router.post("/close/{trade_id}")
 def close_paper_trade(trade_id: str, exit_price: Optional[float] = Query(default=None)):
     """Manually closes an active virtual paper trading position."""
@@ -329,6 +386,47 @@ def close_paper_trade(trade_id: str, exit_price: Optional[float] = Query(default
         return {"status": "success", "closed_position": record.model_dump()}
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/close-position")
+def close_paper_position_compat(req: ClosePositionRequest):
+    """Compatibility endpoint for AI Studio UI."""
+    tid = req.position_id or req.trade_id or req.id
+    if not tid:
+        # If no specific id provided, close the first open trade
+        with paper_engine.lock:
+            open_trades = [t.id for t in paper_engine.trades.values() if t.status == "OPEN"]
+        if not open_trades:
+            return {"status": "ok", "message": "No open positions to close."}
+        tid = open_trades[0]
+
+    try:
+        record = paper_engine.close_manually(tid, req.exit_price)
+        return {"status": "success", "closed_position": record.model_dump()}
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/close-all")
+def close_all_paper_positions_compat(req: CloseAllRequest = Body(default_factory=CloseAllRequest)):
+    """Compatibility endpoint for AI Studio UI Close All button."""
+    closed_list = []
+    with paper_engine.lock:
+        open_trade_ids = [t.id for t in paper_engine.trades.values() if t.status == "OPEN"]
+
+    for tid in open_trade_ids:
+        try:
+            closed = paper_engine.close_manually(tid)
+            closed_list.append(closed.model_dump())
+        except Exception:
+            pass
+
+    return {
+        "status": "success",
+        "closed_count": len(closed_list),
+        "closed_positions": closed_list,
+        "message": f"Successfully squared off {len(closed_list)} positions ({req.reason}).",
+    }
 
 
 @router.get("/portfolio")
