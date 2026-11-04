@@ -487,11 +487,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS Middleware (allowing all origins including AI Studio web app)
+# CORS Middleware (allowing AI Studio frontend and localhost)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_origin_regex="https?://.*",
+    allow_origins=[
+        "https://tradex-algo-trading-desk.ai.studio",
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:7860",
+        "https://tradex-algo.onrender.com",
+    ],
+    allow_origin_regex=r"https://.*\.ai\.studio",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
