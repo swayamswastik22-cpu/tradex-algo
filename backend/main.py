@@ -407,6 +407,12 @@ class AngelOneWebSocketManager:
                     f"Resolved Token Lookup: {len(sym_map)} symbols, {len(equity_tokens)} Equity tokens, {len(idx_tokens)} Index tokens."
                 )
 
+                # Pre-fetch official close prices via getMarketData so ticks have accurate today's % change immediately
+                try:
+                    self.fetch_live_market_quotes_batch()
+                except Exception as ex:
+                    logger.warning(f"Pre-WS market quote batch notice: {ex}")
+
                 # 3. Initialize SmartWebSocketV2 directly with fresh tokens
                 sws = SmartWebSocketV2(
                     auth_token=jwt_token,
@@ -468,13 +474,22 @@ class AngelOneWebSocketManager:
                                 self.previous_closes[token] = close_price_val
                                 PREVIOUS_CLOSES[sym] = close_price_val
 
-                            prev_close = self.previous_closes.get(sym) or PREVIOUS_CLOSES.get(sym, price_val)
+                            st = self.market_state.get(sym) or {}
+                            prev_close = (
+                                self.previous_closes.get(sym)
+                                or self.previous_closes.get(token)
+                                or PREVIOUS_CLOSES.get(sym)
+                                or PREVIOUS_CLOSES.get(token)
+                                or st.get("prev_close")
+                                or st.get("close")
+                                or st.get("previous_close")
+                                or price_val
+                            )
                             final_high = day_high if day_high else max(price_val, prev_close)
                             final_low = day_low if day_low else min(price_val, prev_close)
                             chg = round(price_val - prev_close, 2)
                             pct = round(((price_val - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
 
-                            st = self.market_state.get(sym) or {}
                             final_high = max(st.get("high", final_high), final_high)
                             final_low = min(st.get("low", final_low), final_low)
 
