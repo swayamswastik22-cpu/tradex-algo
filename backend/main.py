@@ -68,18 +68,8 @@ DATA_FILE_CANDIDATES = [
     os.path.join(CURRENT_DIR, "data", "nse_stocks.json"),
 ]
 ALL_STOCK_SYMBOLS: List[str] = []
-PREVIOUS_CLOSES: Dict[str, float] = {
-    "NIFTY": 23440.8,
-    "BANKNIFTY": 55002.2,
-    "FINNIFTY": 24050.0,
-    "MIDCPNIFTY": 12850.0,
-}
-INITIAL_LTP_PRICES: Dict[str, float] = {
-    "NIFTY": 23810.85,
-    "BANKNIFTY": 55540.05,
-    "FINNIFTY": 24200.0,
-    "MIDCPNIFTY": 12850.0,
-}
+PREVIOUS_CLOSES: Dict[str, float] = {}
+INITIAL_LTP_PRICES: Dict[str, float] = {}
 
 for data_path in DATA_FILE_CANDIDATES:
     if os.path.exists(data_path):
@@ -87,14 +77,10 @@ for data_path in DATA_FILE_CANDIDATES:
             with open(data_path, "r", encoding="utf-8") as f:
                 loaded_stocks = json.load(f)
                 for s in loaded_stocks:
-                    sym = s["symbol"].upper().strip()
-                    if sym not in ALL_STOCK_SYMBOLS:
+                    sym = s.get("symbol", "").upper().strip()
+                    if sym and sym not in ALL_STOCK_SYMBOLS:
                         ALL_STOCK_SYMBOLS.append(sym)
-                    if s.get("prev_close"):
-                        PREVIOUS_CLOSES[sym] = float(s["prev_close"])
-                    if s.get("ltp"):
-                        INITIAL_LTP_PRICES[sym] = float(s["ltp"])
-            logger.info(f"Loaded {len(ALL_STOCK_SYMBOLS)} FNO stocks from {data_path} into universe and pricing state.")
+            logger.info(f"Loaded {len(ALL_STOCK_SYMBOLS)} FNO stock symbols from {data_path} (live quotes will be fetched via Angel One).")
             break
         except Exception as e:
             logger.warning(f"Failed to load {data_path}: {e}")
@@ -167,6 +153,7 @@ class AngelOneWebSocketManager:
     def __init__(self):
         self.running = False
         self.thread: Optional[threading.Thread] = None
+        self.quote_thread: Optional[threading.Thread] = None
         self.sws: Optional[Any] = None
         self.api_key = os.getenv("ANGEL_API_KEY") or os.getenv("SMARTAPI_API_KEY", "")
         self.client_code = os.getenv("ANGEL_CLIENT_CODE") or os.getenv("SMARTAPI_CLIENT_CODE", "")
@@ -175,10 +162,10 @@ class AngelOneWebSocketManager:
         self.user_name = ""
         self.ticks_count = 0
         self.last_tick_time = ""
-        self.latest_prices: Dict[str, float] = dict(INITIAL_LTP_PRICES)
+        self.latest_prices: Dict[str, float] = {}
         self.market_state: Dict[str, Dict[str, Any]] = {}
         self.nfo_contracts_by_symbol: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-        self.previous_closes: Dict[str, float] = dict(PREVIOUS_CLOSES)
+        self.previous_closes: Dict[str, float] = {}
         self.token_to_symbol: Dict[str, str] = dict(TOKEN_TO_SYMBOL)
         self.symbol_to_token: Dict[str, int] = {}
         self.resolved_integer_tokens: Dict[str, List[int]] = {"NSE": [], "INDICES": []}
@@ -188,30 +175,13 @@ class AngelOneWebSocketManager:
             else "SIMULATED"
         )
 
-        # Initialize real-time state for universe
-        for sym in (ALL_STOCK_SYMBOLS + ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]):
-            p_close = PREVIOUS_CLOSES.get(sym, 1000.0)
-            init_p = INITIAL_LTP_PRICES.get(sym, p_close)
-            self.market_state[sym] = {
-                "symbol": sym,
-                "ltp": init_p,
-                "high": max(init_p, p_close),
-                "low": min(init_p, p_close),
-                "open": init_p,
-                "prev_close": p_close,
-                "change": round(init_p - p_close, 2),
-                "percent_change": round(((init_p - p_close) / p_close) * 100, 2) if p_close > 0 else 0.0,
-                "orb_high": round(p_close * 1.006, 2),
-                "orb_low": round(p_close * 0.994, 2),
-                "volume": 0,
-                "last_tick_time": "",
-            }
-
     def start(self):
         self.running = True
         self.thread = threading.Thread(target=self._run_loop, daemon=True, name="AngelOneFeedThread")
         self.thread.start()
-        logger.info(f"Angel One Market Feed started in {self.mode} mode.")
+        self.quote_thread = threading.Thread(target=self._run_market_data_poll_loop, daemon=True, name="AngelOneQuotePoller")
+        self.quote_thread.start()
+        logger.info(f"Angel One Market Feed & REST Quote Poller started in {self.mode} mode.")
 
     def stop(self):
         self.running = False
@@ -504,33 +474,117 @@ class AngelOneWebSocketManager:
                 logger.warning(f"Angel One WebSocket loop notice: {e}. Reconnecting in 5s...")
                 time.sleep(5)
 
-    def _run_simulated_tick_feed(self):
-        """Fallback simulator for when live credentials are not set."""
-        base_prices = dict(self.latest_prices)
+    def fetch_live_market_quotes_batch(self):
+        """Fetches real-time market quotes via Angel One REST API getMarketData for all 218 FNO stocks in chunks of 50."""
+        if not angel_auth.smart_api or not angel_auth.jwt_token:
+            angel_auth.generate_session()
+        if not angel_auth.smart_api:
+            return
+
+        tokens = self.resolved_integer_tokens.get("NSE", [])
+        if not tokens:
+            eq_toks, idx_toks, tok_map, sym_map = self._fetch_scrip_master()
+            self.token_to_symbol.update(tok_map)
+            self.symbol_to_token.update(sym_map)
+            tokens = eq_toks
+            self.resolved_integer_tokens = {"NSE": eq_toks, "INDICES": idx_toks}
+
+        if not tokens:
+            return
+
+        def chunks(lst, n):
+            for i in range(0, len(lst), n):
+                yield lst[i:i + n]
+
+        for chunk in chunks(tokens, 50):
+            try:
+                token_strs = [str(t) for t in chunk]
+                resp = angel_auth.smart_api.getMarketData("FULL", {"NSE": token_strs})
+                if resp and resp.get("status") and resp.get("data", {}).get("fetched"):
+                    fetched_list = resp["data"]["fetched"]
+                    now_iso = datetime.now().isoformat()
+                    now_ts = time.time()
+                    for item in fetched_list:
+                        tok = str(item.get("symbolToken", "")).strip()
+                        trading_sym = str(item.get("tradingSymbol", "")).strip()
+                        clean_sym = trading_sym.replace("-EQ", "").strip().upper()
+                        sym = self.token_to_symbol.get(tok) or clean_sym
+
+                        ltp = float(item.get("ltp") or 0.0)
+                        if ltp <= 0:
+                            continue
+
+                        close_p = float(item.get("close") or 0.0)
+                        if close_p <= 0:
+                            close_p = ltp
+
+                        pct_change = float(item.get("percentChange") if item.get("percentChange") is not None else round(((ltp - close_p) / close_p) * 100, 2))
+                        chg = round(float(item.get("netChange") if item.get("netChange") is not None else (ltp - close_p)), 2)
+                        high_p = float(item.get("high") or ltp)
+                        low_p = float(item.get("low") or ltp)
+                        open_p = float(item.get("open") or ltp)
+                        vol = int(item.get("tradeVolume") or 0)
+                        oi = int(item.get("opnInterest") or 0)
+
+                        # Update in-memory state with 100% genuine live prices
+                        self.latest_prices[sym] = ltp
+                        self.latest_prices[tok] = ltp
+                        self.previous_closes[sym] = close_p
+                        self.previous_closes[tok] = close_p
+                        PREVIOUS_CLOSES[sym] = close_p
+
+                        or_high = round(close_p * 1.006, 2)
+                        or_low = round(close_p * 0.994, 2)
+
+                        record = {
+                            "token": tok,
+                            "symbol": sym,
+                            "ltp": ltp,
+                            "current_price": ltp,
+                            "open": open_p,
+                            "high": high_p,
+                            "low": low_p,
+                            "close": close_p,
+                            "prev_close": close_p,
+                            "previous_close": close_p,
+                            "change": chg,
+                            "percent_change": pct_change,
+                            "volume": vol,
+                            "oi": oi,
+                            "orb_high": or_high,
+                            "orb_low": or_low,
+                            "last_tick_time": now_iso,
+                            "feed_source": "Angel One REST MarketData (Live)",
+                        }
+                        self.market_state[sym] = record
+                        self.market_state[tok] = record
+
+                        candle_engine.add_tick(sym, ltp, now_ts)
+                        paper_engine.process_tick(sym, ltp)
+
+            except Exception as ex:
+                logger.debug(f"Market quotes batch fetch note: {ex}")
+            time.sleep(0.3)
+
+    def _run_market_data_poll_loop(self):
+        """Continuously polls Angel One getMarketData every 3 seconds to keep all 218 FNO quotes fresh."""
+        logger.info("Angel One REST MarketData Poller started (3s interval).")
         while self.running:
             try:
-                now_ts = time.time()
-                for sym, cur in list(base_prices.items()):
-                    step = cur * 0.0004 * random.choice([-1.0, 0.0, 1.0])
-                    new_price = round(cur + step, 2)
-                    base_prices[sym] = new_price
-                    self.latest_prices[sym] = new_price
+                self.fetch_live_market_quotes_batch()
+                time.sleep(3)
+            except Exception as e:
+                logger.warning(f"MarketData poller loop note: {e}")
+                time.sleep(3)
 
-                    st = self.market_state.get(sym)
-                    if st:
-                        st["ltp"] = new_price
-                        st["high"] = max(st.get("high", new_price), new_price)
-                        st["low"] = min(st.get("low", new_price), new_price)
-                        prev = st.get("prev_close", new_price)
-                        chg = round(new_price - prev, 2)
-                        st["change"] = chg
-                        st["percent_change"] = round((chg / prev) * 100, 2) if prev > 0 else 0.0
-
-                    candle_engine.add_tick(sym, new_price, now_ts)
-                    paper_engine.process_tick(sym, new_price)
-                time.sleep(2)
+    def _run_simulated_tick_feed(self):
+        """Fallback poller that delegates to live batch quote fetcher."""
+        while self.running:
+            try:
+                self.fetch_live_market_quotes_batch()
+                time.sleep(3)
             except Exception:
-                time.sleep(2)
+                time.sleep(3)
 
     def subscribe_instrument(self, symbol: str, token: str, exch_seg: str = "NSE") -> bool:
         """Dynamically subscribes a newly selected symbol/token on the active SmartWebSocketV2 feed."""
@@ -842,15 +896,16 @@ def get_system_state():
     # Dynamic calculation of LTP changes, point differences, and %Chg
     ticker_data = {}
     for sym, ltp in live_prices.items():
-        prev_close = PREVIOUS_CLOSES.get(sym, ltp)
-        chg = round(ltp - prev_close, 2)
-        chg_pct = round((chg / prev_close) * 100, 2) if prev_close > 0 else 0.0
+        st = feed_manager.market_state.get(sym, {})
+        prev_close = st.get("prev_close") or feed_manager.previous_closes.get(sym) or PREVIOUS_CLOSES.get(sym, ltp)
+        chg = st.get("change") if st.get("change") is not None else round(ltp - prev_close, 2)
+        chg_pct = st.get("percent_change") if st.get("percent_change") is not None else (round((chg / prev_close) * 100, 2) if prev_close > 0 else 0.0)
         ticker_data[sym] = {
             "symbol": sym,
             "ltp": ltp,
             "prev_close": prev_close,
             "change": chg,
-            "change_pct": chg_pct,
+            "percent_change": chg_pct,
             "direction": "up" if chg > 0 else ("down" if chg < 0 else "neutral"),
         }
 

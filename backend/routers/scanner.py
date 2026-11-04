@@ -61,7 +61,7 @@ def _get_live_market_state() -> Tuple[Dict[str, float], Dict[str, Dict[str, Any]
     except Exception:
         pass
 
-    # 3. Load from fno_stocks.json directly if empty
+    # 3. Load symbol names from fno_stocks.json if empty (NEVER use static CSV prices)
     if not all_symbols or len(all_symbols) < 50:
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         for candidate in [
@@ -72,16 +72,22 @@ def _get_live_market_state() -> Tuple[Dict[str, float], Dict[str, Dict[str, Any]
                 try:
                     with open(candidate, "r", encoding="utf-8") as f:
                         stocks = json.load(f)
-                        all_symbols = [s["symbol"].upper().strip() for s in stocks if "symbol" in s]
-                        for s in stocks:
-                            sym = s["symbol"].upper().strip()
-                            if s.get("prev_close"):
-                                previous_closes[sym] = float(s["prev_close"])
-                            if s.get("ltp") and sym not in latest_prices:
-                                latest_prices[sym] = float(s["ltp"])
+                        all_symbols = [s.get("symbol", "").upper().strip() for s in stocks if s.get("symbol")]
                     break
                 except Exception as ex:
                     logger.warning(f"Failed to read fno_stocks.json: {ex}")
+
+    # If live prices are not yet populated, trigger batch fetch via feed_manager
+    if not latest_prices and main_mod:
+        feed = getattr(main_mod, "feed_manager", None)
+        if feed and hasattr(feed, "fetch_live_market_quotes_batch"):
+            try:
+                feed.fetch_live_market_quotes_batch()
+                latest_prices.update(feed.latest_prices)
+                market_state.update(feed.market_state)
+                previous_closes.update(feed.previous_closes)
+            except Exception:
+                pass
 
     return latest_prices, market_state, previous_closes, all_symbols
 
@@ -135,23 +141,25 @@ def run_live_scanner(
 
     for sym in target_symbols:
         st = market_state.get(sym, {})
-        ltp = latest_prices.get(sym) or st.get("ltp")
-        prev_close = st.get("prev_close") or previous_closes.get(sym)
+        ltp = st.get("ltp") or latest_prices.get(sym)
+        prev_close = st.get("prev_close") or st.get("close") or previous_closes.get(sym)
 
-        if not prev_close and ltp:
-            prev_close = ltp
-        elif not prev_close:
-            prev_close = 1000.0
-
-        if not ltp:
-            ltp = prev_close
+        if not ltp or float(ltp) <= 0:
+            continue
 
         ltp = round(float(ltp), 2)
-        prev_close = round(float(prev_close), 2)
+        if not prev_close or float(prev_close) <= 0:
+            prev_close = ltp
+        else:
+            prev_close = round(float(prev_close), 2)
 
-        # Real-time change and % change
-        change = round(ltp - prev_close, 2)
-        pct_change = round(((ltp - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
+        # Prioritize live percent_change and change from Angel One FULL market quote
+        if st.get("percent_change") is not None:
+            pct_change = round(float(st["percent_change"]), 2)
+            change = round(float(st.get("change", ltp - prev_close)), 2)
+        else:
+            change = round(ltp - prev_close, 2)
+            pct_change = round(((ltp - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
 
         # Day High & Day Low from live tick cache
         day_high = round(float(st.get("high", max(ltp, prev_close))), 2)

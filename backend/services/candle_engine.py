@@ -80,7 +80,7 @@ class CandleEngine:
                         "high": round(price, 2),
                         "low": round(price, 2),
                         "close": round(price, 2),
-                        "volume": random.randint(50, 250),
+                        "volume": 0,
                     }
                 else:
                     # Update active forming candle
@@ -89,7 +89,7 @@ class CandleEngine:
                         forming["high"] = round(price, 2)
                     if price < forming["low"]:
                         forming["low"] = round(price, 2)
-                    forming["volume"] += random.randint(10, 80)
+                    forming["volume"] += 1
 
     def get_forming_candle(self, symbol: str, interval: str) -> Optional[Dict[str, Any]]:
         clean_sym = symbol.strip().upper()
