@@ -219,55 +219,64 @@ def _fetch_nfo_batch_quotes(tokens: List[str]) -> Dict[str, Dict[str, Any]]:
         for i in range(0, len(lst), n):
             yield lst[i:i + n]
 
-    for chunk in chunks(tokens, 45):
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def fetch_chunk(chunk):
+        res_items = []
         try:
             resp = angel_auth.smart_api.getMarketData("FULL", {"NFO": chunk})
             if resp and not resp.get("status"):
                 if angel_auth.handle_api_response(resp):
                     resp = angel_auth.smart_api.getMarketData("FULL", {"NFO": chunk})
-                else:
-                    break
             if resp and resp.get("status") and resp.get("data", {}).get("fetched"):
-                for item in resp["data"]["fetched"]:
-                    tok = str(item.get("symbolToken", "")).strip()
-                    trading_sym = str(item.get("tradingSymbol", "")).strip()
-                    ltp = float(item.get("ltp") or 0.0)
-                    close_p = float(item.get("close") or 0.0)
-                    oi = int(item.get("opnInterest") or 0)
-                    net_chg = float(item.get("netChange") if item.get("netChange") is not None else (ltp - close_p))
-                    pct_chg = float(item.get("percentChange") if item.get("percentChange") is not None else (round(((ltp - close_p) / close_p) * 100, 2) if close_p > 0 else 0.0))
-                    vol = int(item.get("tradeVolume") or 0)
-
-                    record = {
-                        "token": tok,
-                        "symbol": trading_sym,
-                        "ltp": ltp,
-                        "current_price": ltp,
-                        "close": close_p,
-                        "prev_close": close_p,
-                        "previous_close": close_p,
-                        "oi": oi,
-                        "change_oi": int(oi * 0.04) if oi > 0 else 0,
-                        "change_in_oi": int(oi * 0.04) if oi > 0 else 0,
-                        "change": round(net_chg, 2),
-                        "net_change": round(net_chg, 2),
-                        "netChange": round(net_chg, 2),
-                        "pct_change": round(pct_chg, 2),
-                        "change_pct": round(pct_chg, 2),
-                        "percent_change": round(pct_chg, 2),
-                        "percentChange": round(pct_chg, 2),
-                        "volume": vol,
-                    }
-                    fetched_quotes[tok] = record
-                    fetched_quotes[trading_sym] = record
-
-                    if feed:
-                        feed.market_state[tok] = record
-                        feed.market_state[trading_sym] = record
-                        feed.latest_prices[tok] = ltp
-                        feed.latest_prices[trading_sym] = ltp
+                res_items = resp["data"]["fetched"]
         except Exception as ex:
-            logger.debug(f"Option quote batch error: {ex}")
+            logger.debug(f"Option quote batch chunk error: {ex}")
+        return res_items
+
+    chunk_list = list(chunks(tokens, 45))
+    with ThreadPoolExecutor(max_workers=min(4, len(chunk_list) or 1)) as executor:
+        future_to_chunk = {executor.submit(fetch_chunk, ch): ch for ch in chunk_list}
+        for future in as_completed(future_to_chunk):
+            fetched_items = future.result()
+            for item in fetched_items:
+                tok = str(item.get("symbolToken", "")).strip()
+                trading_sym = str(item.get("tradingSymbol", "")).strip()
+                ltp = float(item.get("ltp") or 0.0)
+                close_p = float(item.get("close") or 0.0)
+                oi = int(item.get("opnInterest") or 0)
+                net_chg = float(item.get("netChange") if item.get("netChange") is not None else (ltp - close_p))
+                pct_chg = float(item.get("percentChange") if item.get("percentChange") is not None else (round(((ltp - close_p) / close_p) * 100, 2) if close_p > 0 else 0.0))
+                vol = int(item.get("tradeVolume") or 0)
+
+                record = {
+                    "token": tok,
+                    "symbol": trading_sym,
+                    "ltp": ltp,
+                    "current_price": ltp,
+                    "close": close_p,
+                    "prev_close": close_p,
+                    "previous_close": close_p,
+                    "oi": oi,
+                    "change_oi": int(oi * 0.04) if oi > 0 else 0,
+                    "change_in_oi": int(oi * 0.04) if oi > 0 else 0,
+                    "change": round(net_chg, 2),
+                    "net_change": round(net_chg, 2),
+                    "netChange": round(net_chg, 2),
+                    "pct_change": round(pct_chg, 2),
+                    "change_pct": round(pct_chg, 2),
+                    "percent_change": round(pct_chg, 2),
+                    "percentChange": round(pct_chg, 2),
+                    "volume": vol,
+                }
+                fetched_quotes[tok] = record
+                fetched_quotes[trading_sym] = record
+
+                if feed:
+                    feed.market_state[tok] = record
+                    feed.market_state[trading_sym] = record
+                    feed.latest_prices[tok] = ltp
+                    feed.latest_prices[trading_sym] = ltp
 
     return fetched_quotes
 
