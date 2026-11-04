@@ -1274,10 +1274,13 @@ def get_system_state():
     portfolio = paper_engine.get_portfolio_summary()
 
     with paper_engine.lock:
-        live_prices = {**feed_manager.latest_prices, **paper_engine.live_prices}
+        paper_prices = dict(list(paper_engine.live_prices.items()))
         active_positions = [
             t.model_dump() for t in paper_engine.trades.values() if t.status == "OPEN"
         ]
+
+    feed_prices = dict(list(feed_manager.latest_prices.items()))
+    live_prices = {**feed_prices, **paper_prices}
 
     market_info = {
         "exchange": "NSE / BSE India",
