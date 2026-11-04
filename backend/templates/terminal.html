@@ -455,7 +455,17 @@
       
       try {
         const res = await originalFetch(`${API_BASE}/api/auth/verify?pin=${encodeURIComponent(pin)}`);
-        const data = await res.json();
+        let data = {};
+        const text = await res.text();
+        try {
+          data = JSON.parse(text);
+        } catch (e) {
+          if (res.status === 502 || res.status === 503 || text.includes("Bad Gateway") || text.includes("<!doctype")) {
+            throw new Error("Server is waking up / restarting. Please wait 10 seconds and click Authorize again.");
+          }
+          throw new Error(`Server returned HTTP ${res.status}.`);
+        }
+
         if (res.ok && data.authorized) {
           currentOwnerPin = pin;
           localStorage.setItem("tradex_owner_pin", pin);
@@ -467,7 +477,7 @@
           if (errElem) { errElem.innerText = "Invalid PIN. Access denied."; errElem.classList.remove("hidden"); }
         }
       } catch (ex) {
-        if (errElem) { errElem.innerText = "Connection error: " + ex.message; errElem.classList.remove("hidden"); }
+        if (errElem) { errElem.innerText = ex.message; errElem.classList.remove("hidden"); }
       } finally {
         btn.disabled = false;
         btn.innerHTML = `<span>Authorize & Unlock Desk</span>`;

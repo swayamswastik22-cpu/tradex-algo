@@ -23,8 +23,7 @@ cloudflared.exe
 *.dll
 
 # Large Downloaded Instrument Datasets (auto-cached on startup)
-OpenAPIScripMaster.json
-backend/OpenAPIScripMaster.json
+OpenAPIScripMaster_raw.json
 
 # Local Cloned Reference Repositories
 repos/

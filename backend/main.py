@@ -278,11 +278,19 @@ class AngelOneWebSocketManager:
                         logger.info(f"Downloading live Angel One ScripMaster from: {url}")
                         resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=25)
                         if resp.status_code == 200 and "application/json" in resp.headers.get("content-type", ""):
-                            raw_instruments = resp.json()
+                            downloaded = resp.json()
+                            raw_instruments = [
+                                item for item in downloaded
+                                if str(item.get("name", "")).upper().strip().replace("-EQ", "") in target_names
+                                or str(item.get("symbol", "")).upper().strip().replace("-EQ", "") in target_names
+                                or str(item.get("token", "")).strip() in ["26000", "26009", "99926000", "99926009", "99919000", "99926017", "1"]
+                            ]
+                            del downloaded
+                            gc.collect()
                             try:
                                 with open(local_cache, "w", encoding="utf-8") as f:
                                     json.dump(raw_instruments, f)
-                                logger.info(f"Downloaded and cached {len(raw_instruments)} instruments from {url}.")
+                                logger.info(f"Downloaded and cached {len(raw_instruments)} filtered instruments (RAM protected).")
                             except Exception:
                                 pass
                             break
