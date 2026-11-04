@@ -865,6 +865,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Admin Access PIN for Personal AI Studio Session Lockdown
+ADMIN_PIN = str(
+    os.getenv("TRADEX_ADMIN_PIN")
+    or os.getenv("ANGEL_PIN")
+    or "984726"
+).strip().strip('"').strip("'")
+
 # CORS Middleware: wildcard * with allow_credentials=False for AI Studio preview iframes (*.scf.usercontent.goog)
 app.add_middleware(
     CORSMiddleware,
@@ -877,8 +884,9 @@ app.add_middleware(
 
 
 @app.middleware("http")
-async def add_cors_headers(request: Request, call_next):
-    """Global HTTP middleware enforcing Access-Control-Allow-Origin: * on every response including OPTIONS preflights."""
+async def security_and_cors_middleware(request: Request, call_next):
+    """Enforces ADMIN_PIN authentication on all /api/* routes and injects CORS headers on every response."""
+    # 1. Answer preflight OPTIONS immediately
     if request.method == "OPTIONS":
         response = Response(status_code=200)
         response.headers["Access-Control-Allow-Origin"] = "*"
@@ -886,6 +894,29 @@ async def add_cors_headers(request: Request, call_next):
         response.headers["Access-Control-Allow-Headers"] = "*"
         response.headers["Access-Control-Expose-Headers"] = "*"
         return response
+
+    path = request.url.path
+
+    # 2. Enforce PIN authentication on all /api/* routes (except /api/auth/verify and root/health)
+    if path in ["/", "/health", "/favicon.ico"] or path == "/api/auth/verify":
+        pass
+    elif path.startswith("/api"):
+        auth_pin = (
+            request.headers.get("X-Auth-Pin")
+            or request.headers.get("x-auth-pin")
+            or request.query_params.get("pin")
+        )
+        if not auth_pin or str(auth_pin).strip() != ADMIN_PIN:
+            response = JSONResponse(
+                status_code=401,
+                content={"detail": "Unauthorized: Invalid or missing X-Auth-Pin header or pin query parameter."},
+            )
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            response.headers["Access-Control-Allow-Methods"] = "*"
+            response.headers["Access-Control-Allow-Headers"] = "*"
+            response.headers["Access-Control-Expose-Headers"] = "*"
+            return response
+
     try:
         response = await call_next(request)
     except Exception as exc:
@@ -899,6 +930,22 @@ async def add_cors_headers(request: Request, call_next):
     response.headers["Access-Control-Allow-Headers"] = "*"
     response.headers["Access-Control-Expose-Headers"] = "*"
     return response
+
+
+@app.post("/api/auth/verify", tags=["Auth"])
+async def verify_auth_pin(request: Request):
+    """Verifies personal AI Studio PIN and returns authorization status."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    pin_val = str(body.get("pin", "")).strip() if isinstance(body, dict) else ""
+    if pin_val == ADMIN_PIN:
+        return {"authorized": True}
+    return JSONResponse(
+        status_code=401,
+        content={"authorized": False, "detail": "Invalid PIN"},
+    )
 
 
 @app.exception_handler(Exception)
@@ -944,7 +991,12 @@ def subscribe_feed_symbol(
 
 @app.websocket("/ws/stream")
 async def websocket_stream_endpoint(websocket: WebSocket):
-    """Real-time streaming WebSocket endpoint for UI clients with 20s heartbeat keep-alive for Render."""
+    """Real-time streaming WebSocket endpoint locked behind ADMIN_PIN query parameter."""
+    pin_param = str(websocket.query_params.get("pin", "")).strip()
+    if pin_param != ADMIN_PIN:
+        await websocket.close(code=1008, reason="Unauthorized: Invalid or missing pin parameter")
+        return
+
     await websocket.accept()
     ACTIVE_WS_CLIENTS.append(websocket)
     try:
@@ -1004,27 +1056,18 @@ async def websocket_stream_endpoint(websocket: WebSocket):
 
 
 # ==========================================================
-# Root & Health Endpoints (Supporting HEAD for UptimeRobot)
+# Root & Health Endpoints (Locked - Zero Public UI Exposure)
 # ==========================================================
-TERMINAL_HTML_PATH = os.path.join(CURRENT_DIR, "templates", "terminal.html")
-
 @app.api_route("/", methods=["GET", "HEAD"], tags=["General"])
-async def root(request: Request = None, format: Optional[str] = Query(default=None)):
-    """Handles GET and HEAD for root route (UptimeRobot monitor & Pro Trading Desk)."""
-    if request and request.method == "HEAD":
-        return JSONResponse({"status": "online"})
-    accept_header = request.headers.get("accept", "") if request else ""
-    if format != "json" and ("text/html" in accept_header or "*/*" in accept_header):
-        if os.path.exists(TERMINAL_HTML_PATH):
-            with open(TERMINAL_HTML_PATH, "r", encoding="utf-8") as f:
-                return HTMLResponse(content=f.read())
-    return {"status": "online"}
-
-
 @app.api_route("/health", methods=["GET", "HEAD"], tags=["General"])
+async def locked_root_and_health(request: Request = None):
+    """Locked root and health monitor endpoint. Exposes zero public UI or market data (keeps UptimeRobot green)."""
+    return JSONResponse({"status": "locked", "service": "private"})
+
+
 @app.api_route("/api/health", methods=["GET", "HEAD"], tags=["General"])
-async def health_check(request: Request = None):
-    """Handles GET and HEAD for health checks (UptimeRobot monitor & Angel One diagnostic status)."""
+async def api_health_check(request: Request = None):
+    """Health check for authenticated API clients."""
     if request and request.method == "HEAD":
         return JSONResponse({"status": "healthy"})
     return {
@@ -1036,6 +1079,12 @@ async def health_check(request: Request = None):
         "total_active_prices": len(feed_manager.latest_prices),
         "auth_error": angel_auth.last_error_msg,
     }
+
+
+@app.get("/terminal", tags=["General"])
+def terminal_page():
+    """Disabled public terminal."""
+    return JSONResponse({"status": "locked", "service": "private"}, status_code=404)
 
 
 @app.get("/api/debug/feed", tags=["General"])
@@ -1060,15 +1109,6 @@ def debug_feed():
     }
 
 
-@app.get("/terminal", response_class=HTMLResponse, tags=["General"])
-def terminal_page():
-    """Serves the rich interactive TRADEx-ALGO Live Terminal & Copy Trader."""
-    if os.path.exists(TERMINAL_HTML_PATH):
-        with open(TERMINAL_HTML_PATH, "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
-    return HTMLResponse("<h1>Terminal HTML not found</h1>", status_code=404)
-
-
 @app.get("/api", tags=["General"])
 def api_endpoints_schema():
     return {
@@ -1076,8 +1116,6 @@ def api_endpoints_schema():
         "version": "2.0.0",
         "status": "online",
         "market": "National Stock Exchange (NSE) & Bombay Stock Exchange (BSE) of India",
-        "docs_url": "/docs",
-        "terminal_url": "/terminal",
         "endpoints": {
             "copy_trade_status": "/api/copy-trade/status",
             "copy_trade_execute": "/api/copy-trade/execute",
