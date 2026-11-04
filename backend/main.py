@@ -190,11 +190,12 @@ class AngelOneWebSocketManager:
     def _fetch_scrip_master(self) -> Tuple[List[int], List[int], Dict[str, str], Dict[str, int]]:
         """Downloads Angel One OpenAPIScripMaster.json and builds fast dictionary lookup
 
-        for all 218 FNO stocks plus NIFTY, BANKNIFTY, and FINNIFTY indices.
+        for all 218 FNO stocks plus NIFTY, BANKNIFTY, SENSEX, and INDIA VIX.
         """
         target_equities = set(ALL_STOCK_SYMBOLS) if ALL_STOCK_SYMBOLS else {
             "RELIANCE", "HDFCBANK", "TCS", "INFY", "SBIN", "ICICIBANK", "LT", "ITC"
         }
+        target_eq_map = {f"{s}-EQ": s for s in target_equities}
         
         nse_equity_tokens: List[int] = []
         index_tokens: List[int] = []
@@ -246,21 +247,35 @@ class AngelOneWebSocketManager:
                 name = str(item.get("name", "")).upper()
                 itype = str(item.get("instrumenttype", ""))
 
-                # Match Equities in NSE
-                clean_sym = sym.replace("-EQ", "")
-                if exch == "NSE" and clean_sym in target_equities and itype in ["", "EQ"]:
+                # Strict Match Equities in NSE by "-EQ"
+                if exch == "NSE" and sym in target_eq_map:
+                    clean_sym = target_eq_map[sym]
                     if token_int not in nse_equity_tokens:
                         nse_equity_tokens.append(token_int)
                     token_to_symbol[str(token_int)] = clean_sym
                     symbol_to_token[clean_sym] = token_int
 
-                # Match Indices (exchangeType 3 / NSE index tokens)
-                if exch == "NSE" and (sym in ["NIFTY", "NIFTY 50", "BANKNIFTY", "NIFTY BANK"] or (itype == "AMXIDX" and name in ["NIFTY", "BANKNIFTY"])):
-                    matched_idx = "NIFTY" if "NIFTY" in sym and "BANK" not in sym else "BANKNIFTY"
+                # Strict Match Indices (tokens 99926000, 99926009, 99919000, 99926017 and 26000, 26009)
+                if token_int in [99926000, 26000]:
                     if token_int not in index_tokens:
                         index_tokens.append(token_int)
-                    token_to_symbol[str(token_int)] = matched_idx
-                    symbol_to_token[matched_idx] = token_int
+                    token_to_symbol[str(token_int)] = "NIFTY"
+                    symbol_to_token["NIFTY"] = token_int
+                elif token_int in [99926009, 26009]:
+                    if token_int not in index_tokens:
+                        index_tokens.append(token_int)
+                    token_to_symbol[str(token_int)] = "BANKNIFTY"
+                    symbol_to_token["BANKNIFTY"] = token_int
+                elif token_int == 99919000:
+                    if token_int not in index_tokens:
+                        index_tokens.append(token_int)
+                    token_to_symbol[str(token_int)] = "SENSEX"
+                    symbol_to_token["SENSEX"] = token_int
+                elif token_int == 99926017:
+                    if token_int not in index_tokens:
+                        index_tokens.append(token_int)
+                    token_to_symbol[str(token_int)] = "INDIA VIX"
+                    symbol_to_token["INDIA VIX"] = token_int
 
                 # Match Active NFO Contracts (Futures & Options) for all 218 FNO stocks & indices
                 if exch == "NFO":
@@ -282,12 +297,14 @@ class AngelOneWebSocketManager:
             26009: "BANKNIFTY",
             99926000: "NIFTY",
             99926009: "BANKNIFTY",
+            99919000: "SENSEX",
+            99926017: "INDIA VIX",
         }
         for tok, sym in default_map.items():
             token_to_symbol[str(tok)] = sym
             if sym not in symbol_to_token:
                 symbol_to_token[sym] = tok
-            if tok in [26000, 26009, 99926000, 99926009]:
+            if tok in [26000, 26009, 99926000, 99926009, 99919000, 99926017]:
                 if tok not in index_tokens:
                     index_tokens.append(tok)
             else:
@@ -365,6 +382,9 @@ class AngelOneWebSocketManager:
                         raw_low = message.get("low_price_of_the_day") or message.get("low") or message.get("low_price") or 0.0
                         day_low = float(raw_low) / 100.0 if raw_low > 0 else None
 
+                        raw_close = message.get("close_price") or message.get("prev_close_price") or message.get("close") or 0.0
+                        close_price_val = float(raw_close) / 100.0 if raw_close > 0 else None
+
                         volume = int(message.get("volume_traded_for_the_day") or message.get("volume") or 0)
                         sym = self.token_to_symbol.get(token) or TOKEN_TO_SYMBOL.get(token, f"NSE_{token}")
 
@@ -381,6 +401,10 @@ class AngelOneWebSocketManager:
                             self.ticks_count += 1
                             self.last_tick_time = now_iso
                             self.latest_prices[sym] = price_val
+
+                            if close_price_val and close_price_val > 0:
+                                self.previous_closes[sym] = close_price_val
+                                PREVIOUS_CLOSES[sym] = close_price_val
 
                             prev_close = self.previous_closes.get(sym, price_val)
                             final_high = day_high if day_high else max(price_val, prev_close)
@@ -427,9 +451,9 @@ class AngelOneWebSocketManager:
                         logger.error(f"Tick parse error: {ex}")
 
                 def on_open(wsapp):
-                    logger.info("Angel One SmartWebSocketV2 connected! Chunk-subscribing tokens in batches of 50...")
+                    logger.info("Angel One SmartWebSocketV2 connected! Subscribing in 5 batches of 45...")
                     print(
-                        f"[WS OPEN] Subscribing {len(equity_tokens)} equities & {len(idx_tokens)} indices in chunks of 50...",
+                        f"[WS OPEN] Subscribing {len(equity_tokens)} equities & {len(idx_tokens)} indices in 45-token chunks (Quote mode)...",
                         flush=True,
                     )
 
@@ -437,13 +461,13 @@ class AngelOneWebSocketManager:
                         for i in range(0, len(lst), n):
                             yield lst[i:i + n]
 
-                    mode = 1  # LTP mode
+                    mode = 2  # Quote mode (mode 1: LTP, mode 2: Quote, mode 3: Snap quote)
                     # Chunk subscriptions to prevent socket reset by Angel One server
-                    for idx, chunk in enumerate(chunks(equity_tokens, 50)):
+                    for idx, chunk in enumerate(chunks(equity_tokens, 45)):
                         token_payload = [{"exchangeType": 1, "tokens": [str(t) for t in chunk]}]
                         sws.subscribe(f"tradex_stream_eq_{idx}", mode, token_payload)
-                        logger.info(f"Subscribed equity chunk {idx + 1} ({len(chunk)} tokens)")
-                        time.sleep(0.2)
+                        logger.info(f"Subscribed equity chunk {idx + 1} ({len(chunk)} tokens) in Quote mode")
+                        time.sleep(0.5)
 
                     if idx_tokens:
                         sws.subscribe(
@@ -451,13 +475,13 @@ class AngelOneWebSocketManager:
                             mode,
                             [{"exchangeType": 3, "tokens": [str(t) for t in idx_tokens]}]
                         )
-                        time.sleep(0.2)
+                        time.sleep(0.5)
                         sws.subscribe(
                             "tradex_stream_idx_1",
                             mode,
                             [{"exchangeType": 1, "tokens": [str(t) for t in idx_tokens]}]
                         )
-                    print("[WS OPEN] All token batches successfully subscribed in LTP mode.", flush=True)
+                    print("[WS OPEN] All token batches successfully subscribed in Quote mode.", flush=True)
 
                 def on_error(*args, **kwargs):
                     logger.warning(f"Angel One WebSocket Error: {args} {kwargs}")
@@ -476,7 +500,7 @@ class AngelOneWebSocketManager:
                 time.sleep(5)
 
     def fetch_live_market_quotes_batch(self):
-        """Fetches real-time market quotes via Angel One REST API getMarketData for all 218 FNO stocks in chunks of 50."""
+        """Fetches real-time market quotes via Angel One REST API getMarketData for all 218 FNO stocks in chunks of 45."""
         if not angel_auth.smart_api or not angel_auth.jwt_token:
             angel_auth.generate_session()
         if not angel_auth.smart_api:
@@ -497,7 +521,7 @@ class AngelOneWebSocketManager:
             for i in range(0, len(lst), n):
                 yield lst[i:i + n]
 
-        for chunk in chunks(tokens, 50):
+        for chunk in chunks(tokens, 45):
             try:
                 token_strs = [str(t) for t in chunk]
                 resp = angel_auth.smart_api.getMarketData("FULL", {"NSE": token_strs})
@@ -519,8 +543,8 @@ class AngelOneWebSocketManager:
                         if close_p <= 0:
                             close_p = ltp
 
-                        pct_change = float(item.get("percentChange") if item.get("percentChange") is not None else round(((ltp - close_p) / close_p) * 100, 2))
-                        chg = round(float(item.get("netChange") if item.get("netChange") is not None else (ltp - close_p)), 2)
+                        pct_change = round(((ltp - close_p) / close_p) * 100, 2) if close_p > 0 else 0.0
+                        chg = round(ltp - close_p, 2)
                         high_p = float(item.get("high") or ltp)
                         low_p = float(item.get("low") or ltp)
                         open_p = float(item.get("open") or ltp)
@@ -567,7 +591,7 @@ class AngelOneWebSocketManager:
 
             except Exception as ex:
                 logger.debug(f"Market quotes batch fetch note: {ex}")
-            time.sleep(0.3)
+            time.sleep(1.2)
 
     def _run_market_data_poll_loop(self):
         """Continuously polls Angel One getMarketData every 3 seconds to keep all 218 FNO quotes fresh."""
@@ -838,6 +862,22 @@ async def health_check(request: Request = None):
         "sample_reliance_ltp": feed_manager.latest_prices.get("RELIANCE"),
         "total_active_prices": len(feed_manager.latest_prices),
         "auth_error": angel_auth.last_error_msg,
+    }
+
+
+@app.get("/api/debug/feed", tags=["General"])
+def debug_feed():
+    """Diagnostic feed endpoint verifying live Angel One connection and token quotes."""
+    return {
+        "angel_logged_in": angel_auth.logged_in,
+        "last_auth_error": angel_auth.last_error_msg,
+        "matched_eq_tokens_count": len(feed_manager.resolved_integer_tokens.get("NSE", [])),
+        "live_fetched_count": len(feed_manager.latest_prices),
+        "sample_stocks": {
+            k: feed_manager.market_state[k]
+            for k in ["NIFTY", "RELIANCE", "HDFCBANK", "TCS", "SBIN"]
+            if k in feed_manager.market_state
+        },
     }
 
 
