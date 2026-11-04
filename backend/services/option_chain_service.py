@@ -737,11 +737,19 @@ def get_option_chain_underlyings():
     ]
 
     stocks_list = []
+    main_mod = sys.modules.get("main") or sys.modules.get("backend.main")
+    live_prices = {}
+    market_state = {}
+    if main_mod and hasattr(main_mod, "feed_manager"):
+        live_prices = main_mod.feed_manager.latest_prices
+        market_state = main_mod.feed_manager.market_state
+
     for sym, item in NSE_STOCKS_MAP.items():
-        ltp = float(item.get("ltp", 0.0))
-        prev = float(item.get("prev_close", 0.0))
-        chg = float(item.get("change", 0.0))
-        chg_pct = float(item.get("change_pct", 0.0))
+        st = market_state.get(sym, {})
+        ltp = float(st.get("ltp") or live_prices.get(sym) or item.get("ltp", 0.0))
+        prev = float(st.get("prev_close") or item.get("prev_close", ltp))
+        chg = float(st.get("change") if st.get("change") is not None else round(ltp - prev, 2))
+        chg_pct = float(st.get("percent_change") if st.get("percent_change") is not None else (round(((ltp - prev) / prev) * 100, 2) if prev > 0 else 0.0))
         stocks_list.append({
             "symbol": sym,
             "name": sym,
@@ -749,7 +757,7 @@ def get_option_chain_underlyings():
             "prev_close": prev,
             "change": chg,
             "change_pct": chg_pct,
-            "volume": item.get("volume", 0),
+            "volume": int(st.get("volume") or item.get("volume", 0)),
             "step": get_strike_step(sym, ltp),
             "high_52w": float(item.get("high_52w", 0.0)),
             "low_52w": float(item.get("low_52w", 0.0)),

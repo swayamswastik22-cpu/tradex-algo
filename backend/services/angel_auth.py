@@ -7,7 +7,7 @@ and extraction of fresh jwtToken, refreshToken, and feedToken.
 import os
 import time
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 import pyotp
 from SmartApi import SmartConnect
@@ -23,14 +23,23 @@ for p in [os.path.join(CURRENT_DIR, ".env"), os.path.join(BACKEND_DIR, ".env"), 
 logger = logging.getLogger("angel_auth")
 
 
+def get_env_cred(keys: List[str]) -> str:
+    """Checks a list of possible environment variable names and returns the first non-empty value."""
+    for k in keys:
+        val = os.getenv(k)
+        if val and str(val).strip():
+            return str(val).strip()
+    return ""
+
+
 class AngelAuthManager:
     """Manages dynamic authentication session generation for Angel One SmartAPI and SmartWebSocketV2."""
 
     def __init__(self):
-        self.api_key = os.getenv("ANGEL_API_KEY") or os.getenv("SMARTAPI_API_KEY", "")
-        self.client_code = os.getenv("ANGEL_CLIENT_CODE") or os.getenv("SMARTAPI_CLIENT_CODE", "")
-        self.pin = os.getenv("ANGEL_PIN") or os.getenv("SMARTAPI_PASSWORD", "")
-        self.totp_secret = os.getenv("ANGEL_TOTP_SECRET") or os.getenv("SMARTAPI_TOTP_KEY", "")
+        self.api_key: str = ""
+        self.client_code: str = ""
+        self.pin: str = ""
+        self.totp_secret: str = ""
         self.smart_api: Optional[SmartConnect] = None
         self.session_data: Dict[str, Any] = {}
         self.jwt_token: str = ""
@@ -38,33 +47,47 @@ class AngelAuthManager:
         self.feed_token: str = ""
         self.user_name: str = ""
         self.last_login_time: float = 0.0
+        self.last_error_msg: str = ""
+        self.logged_in: bool = False
+        self.reload_env()
 
     def reload_env(self):
-        """Reloads credentials from environment variables in case they were updated."""
-        self.api_key = os.getenv("ANGEL_API_KEY") or os.getenv("SMARTAPI_API_KEY", "")
-        self.client_code = os.getenv("ANGEL_CLIENT_CODE") or os.getenv("SMARTAPI_CLIENT_CODE", "")
-        self.pin = os.getenv("ANGEL_PIN") or os.getenv("SMARTAPI_PASSWORD", "")
-        self.totp_secret = os.getenv("ANGEL_TOTP_SECRET") or os.getenv("SMARTAPI_TOTP_KEY", "")
+        """Reloads credentials from all possible environment variable aliases."""
+        self.api_key = get_env_cred(["ANGEL_API_KEY", "SMARTAPI_KEY", "API_KEY", "SMARTAPI_API_KEY", "ANGEL_KEY"])
+        self.client_code = get_env_cred(["ANGEL_CLIENT_CODE", "CLIENT_CODE", "ANGEL_CLIENT_ID", "SMARTAPI_CLIENT_CODE", "CLIENT_ID"])
+        self.pin = get_env_cred(["ANGEL_PIN", "ANGEL_PASSWORD", "PIN", "SMARTAPI_PASSWORD", "PASSWORD"])
+        self.totp_secret = get_env_cred(["ANGEL_TOTP_SECRET", "TOTP_SECRET", "SMARTAPI_TOTP_KEY", "ANGEL_TOTP_KEY", "TOTP_KEY"])
 
     def is_configured(self) -> bool:
         self.reload_env()
-        return bool(self.api_key and self.client_code and self.pin and self.totp_secret)
+        configured = bool(self.api_key and self.client_code and self.pin and self.totp_secret)
+        if not configured:
+            missing = []
+            if not self.api_key: missing.append("API_KEY")
+            if not self.client_code: missing.append("CLIENT_CODE")
+            if not self.pin: missing.append("PIN")
+            if not self.totp_secret: missing.append("TOTP_SECRET")
+            self.last_error_msg = f"Missing environment variables: {', '.join(missing)}"
+        return configured
 
     def generate_session(self) -> Dict[str, Any]:
         """Dynamically logs into Angel One using fresh TOTP and returns fresh tokens."""
         self.reload_env()
         if not self.is_configured():
-            logger.warning("Angel One credentials missing or incomplete; operating in simulated mode.")
-            return {"status": False, "message": "Credentials missing"}
+            logger.warning(f"Angel One credentials missing or incomplete: {self.last_error_msg}")
+            self.logged_in = False
+            return {"status": False, "message": self.last_error_msg}
 
         try:
             logger.info("Generating dynamic Angel One session with fresh TOTP...")
-            totp = pyotp.TOTP(self.totp_secret.strip()).now()
-            self.smart_api = SmartConnect(api_key=self.api_key.strip())
-            session = self.smart_api.generateSession(self.client_code.strip(), self.pin.strip(), totp)
+            totp = pyotp.TOTP(self.totp_secret).now()
+            self.smart_api = SmartConnect(api_key=self.api_key)
+            session = self.smart_api.generateSession(self.client_code, self.pin, totp)
 
             if not session or not session.get("status"):
                 msg = session.get("message") if session else "Empty session response"
+                self.last_error_msg = str(msg)
+                self.logged_in = False
                 logger.error(f"Angel One session generation failed: {msg}")
                 return {"status": False, "message": msg}
 
@@ -74,6 +97,8 @@ class AngelAuthManager:
             self.feed_token = data.get("feedToken", "")
             self.user_name = data.get("name", "Angel One Client")
             self.last_login_time = time.time()
+            self.last_error_msg = ""
+            self.logged_in = True
             self.session_data = data
 
             # If feedToken is missing in login payload, fetch explicitly
@@ -100,6 +125,8 @@ class AngelAuthManager:
                 "api_key": self.api_key,
             }
         except Exception as e:
+            self.last_error_msg = str(e)
+            self.logged_in = False
             logger.error(f"Angel One TOTP login error: {e}", exc_info=True)
             return {"status": False, "message": str(e)}
 

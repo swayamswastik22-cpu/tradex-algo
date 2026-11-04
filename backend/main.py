@@ -155,10 +155,11 @@ class AngelOneWebSocketManager:
         self.thread: Optional[threading.Thread] = None
         self.quote_thread: Optional[threading.Thread] = None
         self.sws: Optional[Any] = None
-        self.api_key = os.getenv("ANGEL_API_KEY") or os.getenv("SMARTAPI_API_KEY", "")
-        self.client_code = os.getenv("ANGEL_CLIENT_CODE") or os.getenv("SMARTAPI_CLIENT_CODE", "")
-        self.pin = os.getenv("ANGEL_PIN") or os.getenv("SMARTAPI_PASSWORD", "")
-        self.totp_secret = os.getenv("ANGEL_TOTP_SECRET") or os.getenv("SMARTAPI_TOTP_KEY", "")
+        angel_auth.reload_env()
+        self.api_key = angel_auth.api_key
+        self.client_code = angel_auth.client_code
+        self.pin = angel_auth.pin
+        self.totp_secret = angel_auth.totp_secret
         self.user_name = ""
         self.ticks_count = 0
         self.last_tick_time = ""
@@ -171,8 +172,8 @@ class AngelOneWebSocketManager:
         self.resolved_integer_tokens: Dict[str, List[int]] = {"NSE": [], "INDICES": []}
         self.mode = (
             "LIVE (Angel One SmartWebSocketV2)"
-            if (self.api_key and self.client_code and self.pin and self.totp_secret)
-            else "SIMULATED"
+            if angel_auth.is_configured()
+            else "STANDBY"
         )
 
     def start(self):
@@ -558,6 +559,8 @@ class AngelOneWebSocketManager:
                         }
                         self.market_state[sym] = record
                         self.market_state[tok] = record
+                        self.last_tick_time = now_iso
+                        self.ticks_count += 1
 
                         candle_engine.add_tick(sym, ltp, now_ts)
                         paper_engine.process_tick(sym, ltp)
@@ -823,9 +826,19 @@ async def root(request: Request = None, format: Optional[str] = Query(default=No
 
 @app.api_route("/health", methods=["GET", "HEAD"], tags=["General"])
 @app.api_route("/api/health", methods=["GET", "HEAD"], tags=["General"])
-async def health_check():
-    """Handles GET and HEAD for health checks (UptimeRobot monitor)."""
-    return {"status": "healthy"}
+async def health_check(request: Request = None):
+    """Handles GET and HEAD for health checks (UptimeRobot monitor & Angel One diagnostic status)."""
+    if request and request.method == "HEAD":
+        return JSONResponse({"status": "healthy"})
+    return {
+        "status": "healthy",
+        "angel_logged_in": angel_auth.logged_in,
+        "mode": feed_manager.mode,
+        "last_tick_time": feed_manager.last_tick_time,
+        "sample_reliance_ltp": feed_manager.latest_prices.get("RELIANCE"),
+        "total_active_prices": len(feed_manager.latest_prices),
+        "auth_error": angel_auth.last_error_msg,
+    }
 
 
 @app.get("/terminal", response_class=HTMLResponse, tags=["General"])

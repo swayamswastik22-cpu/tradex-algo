@@ -470,11 +470,11 @@ def get_candles(
         count = 60 if int_lower in ["1m", "3m", "5m"] else (30 if int_lower == "15m" else 20)
         for i in range(count, -1, -1):
             ts = now_ts - (i * step_secs)
-            delta = cur * 0.001 * random.uniform(-1, 1)
+            delta = 0.0
             o = round(cur, 2)
-            c = round(cur + delta, 2)
-            h = round(max(o, c) + abs(delta * 0.6), 2)
-            l = round(min(o, c) - abs(delta * 0.6), 2)
+            c = round(cur, 2)
+            h = round(cur, 2)
+            l = round(cur, 2)
             candles.append({
                 "time": ts,
                 "time_str": datetime.fromtimestamp(ts).strftime("%H:%M" if int_lower != "1d" else "%d %b"),
@@ -482,7 +482,7 @@ def get_candles(
                 "high": h,
                 "low": l,
                 "close": c,
-                "volume": random.randint(5000, 75000),
+                "volume": 0,
             })
             cur = c
 
