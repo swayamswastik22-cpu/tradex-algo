@@ -676,6 +676,7 @@ def format_to_sensibull_json(
 
 
 @router.get("/option-chain")
+@router.get("/option_chain")
 def get_option_chain(
     symbol: str = Query(default="NIFTY", description="NSE Index or Equity Symbol (e.g., NIFTY, BANKNIFTY, RELIANCE)"),
     expiry: str = Query(default="nearest", description="Expiry date in format DD-MMM-YYYY or 'nearest'"),

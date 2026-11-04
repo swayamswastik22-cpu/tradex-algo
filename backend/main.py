@@ -42,6 +42,9 @@ from services.day_trader_nse import router as day_trader_router
 from services.paper_oms import router as paper_oms_router, paper_engine
 from services.backtester import router as backtester_router
 from services.copy_trading_engine import router as copy_trading_router
+from services.candle_engine import candle_engine
+from routers.scanner import router as scanner_router
+from routers.option_chain import router as dynamic_option_chain_router
 
 # Configure logging
 logging.basicConfig(
@@ -56,7 +59,13 @@ APP_START_TIME = time.time()
 # ==========================================================
 # Load 218 FNO Stocks Dataset & Initial Prices
 # ==========================================================
-DATA_FILE_PATH = os.path.join(CURRENT_DIR, "data", "nse_stocks.json")
+from collections import defaultdict
+
+DATA_FILE_CANDIDATES = [
+    os.path.join(CURRENT_DIR, "data", "fno_stocks.json"),
+    os.path.join(os.path.dirname(CURRENT_DIR), "data", "fno_stocks.json"),
+    os.path.join(CURRENT_DIR, "data", "nse_stocks.json"),
+]
 ALL_STOCK_SYMBOLS: List[str] = []
 PREVIOUS_CLOSES: Dict[str, float] = {
     "NIFTY": 23440.8,
@@ -71,20 +80,23 @@ INITIAL_LTP_PRICES: Dict[str, float] = {
     "MIDCPNIFTY": 12850.0,
 }
 
-if os.path.exists(DATA_FILE_PATH):
-    try:
-        with open(DATA_FILE_PATH, "r", encoding="utf-8") as f:
-            loaded_stocks = json.load(f)
-            for s in loaded_stocks:
-                sym = s["symbol"].upper().strip()
-                ALL_STOCK_SYMBOLS.append(sym)
-                if s.get("prev_close"):
-                    PREVIOUS_CLOSES[sym] = float(s["prev_close"])
-                if s.get("ltp"):
-                    INITIAL_LTP_PRICES[sym] = float(s["ltp"])
-        logger.info(f"Loaded {len(ALL_STOCK_SYMBOLS)} stocks into core universe and pricing state.")
-    except Exception as e:
-        logger.warning(f"Failed to load nse_stocks.json: {e}")
+for data_path in DATA_FILE_CANDIDATES:
+    if os.path.exists(data_path):
+        try:
+            with open(data_path, "r", encoding="utf-8") as f:
+                loaded_stocks = json.load(f)
+                for s in loaded_stocks:
+                    sym = s["symbol"].upper().strip()
+                    if sym not in ALL_STOCK_SYMBOLS:
+                        ALL_STOCK_SYMBOLS.append(sym)
+                    if s.get("prev_close"):
+                        PREVIOUS_CLOSES[sym] = float(s["prev_close"])
+                    if s.get("ltp"):
+                        INITIAL_LTP_PRICES[sym] = float(s["ltp"])
+            logger.info(f"Loaded {len(ALL_STOCK_SYMBOLS)} FNO stocks from {data_path} into universe and pricing state.")
+            break
+        except Exception as e:
+            logger.warning(f"Failed to load {data_path}: {e}")
 
 # ==========================================================
 # Angel One SmartWebSocketV2 Background Manager Thread
@@ -125,6 +137,9 @@ class AngelOneWebSocketManager:
         self.ticks_count = 0
         self.last_tick_time = ""
         self.latest_prices: Dict[str, float] = dict(INITIAL_LTP_PRICES)
+        self.market_state: Dict[str, Dict[str, Any]] = {}
+        self.nfo_contracts_by_symbol: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        self.previous_closes: Dict[str, float] = dict(PREVIOUS_CLOSES)
         self.token_to_symbol: Dict[str, str] = dict(TOKEN_TO_SYMBOL)
         self.symbol_to_token: Dict[str, int] = {}
         self.resolved_integer_tokens: Dict[str, List[int]] = {"NSE": [], "INDICES": []}
@@ -133,6 +148,25 @@ class AngelOneWebSocketManager:
             if (self.api_key and self.client_code and self.pin and self.totp_secret)
             else "SIMULATED"
         )
+
+        # Initialize real-time state for universe
+        for sym in (ALL_STOCK_SYMBOLS + ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]):
+            p_close = PREVIOUS_CLOSES.get(sym, 1000.0)
+            init_p = INITIAL_LTP_PRICES.get(sym, p_close)
+            self.market_state[sym] = {
+                "symbol": sym,
+                "ltp": init_p,
+                "high": max(init_p, p_close),
+                "low": min(init_p, p_close),
+                "open": init_p,
+                "prev_close": p_close,
+                "change": round(init_p - p_close, 2),
+                "percent_change": round(((init_p - p_close) / p_close) * 100, 2) if p_close > 0 else 0.0,
+                "orb_high": round(p_close * 1.006, 2),
+                "orb_low": round(p_close * 0.994, 2),
+                "volume": 0,
+                "last_tick_time": "",
+            }
 
     def start(self):
         self.running = True
@@ -217,6 +251,12 @@ class AngelOneWebSocketManager:
                         index_tokens.append(token_int)
                     token_to_symbol[str(token_int)] = matched_idx
                     symbol_to_token[matched_idx] = token_int
+
+                # Match Active NFO Contracts (Futures & Options) for all 218 FNO stocks & indices
+                if exch == "NFO":
+                    clean_name = name.replace("-EQ", "").strip().upper()
+                    if clean_name in target_equities or clean_name in ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]:
+                        self.nfo_contracts_by_symbol[clean_name].append(item)
 
         # Guaranteed fallbacks for exact integer tokens
         default_map = {
@@ -317,8 +357,10 @@ class AngelOneWebSocketManager:
 
                         if ltp > 0:
                             price_val = round(ltp, 2)
-                            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            now_iso = datetime.now().isoformat()
+                            now_dt = datetime.now()
+                            now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+                            now_iso = now_dt.isoformat()
+                            now_ts = now_dt.timestamp()
 
                             # Print received tick to console log
                             print(f"[TICK] {sym:<10} (Token: {token:<8}) -> LTP: Rs {price_val:>9.2f} | Time: {now_str}", flush=True)
@@ -327,6 +369,42 @@ class AngelOneWebSocketManager:
                             self.ticks_count += 1
                             self.last_tick_time = now_iso
                             self.latest_prices[sym] = price_val
+
+                            # Update market_state for real-time live scanner & candle engine
+                            st = self.market_state.get(sym)
+                            prev_close = self.previous_closes.get(sym, price_val)
+                            if st is None:
+                                st = {
+                                    "symbol": sym,
+                                    "ltp": price_val,
+                                    "high": price_val,
+                                    "low": price_val,
+                                    "open": price_val,
+                                    "prev_close": prev_close,
+                                    "change": round(price_val - prev_close, 2),
+                                    "percent_change": round(((price_val - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0,
+                                    "orb_high": round(prev_close * 1.006, 2),
+                                    "orb_low": round(prev_close * 0.994, 2),
+                                    "volume": 0,
+                                    "last_tick_time": now_iso,
+                                }
+                                self.market_state[sym] = st
+                            else:
+                                st["ltp"] = price_val
+                                st["high"] = max(st.get("high", price_val), price_val)
+                                st["low"] = min(st.get("low", price_val), price_val)
+                                chg = round(price_val - prev_close, 2)
+                                st["change"] = chg
+                                st["percent_change"] = round((chg / prev_close) * 100, 2) if prev_close > 0 else 0.0
+                                st["last_tick_time"] = now_iso
+
+                                # Live Opening Range Window (09:15 - 09:30 IST)
+                                if now_dt.hour == 9 and 15 <= now_dt.minute <= 30:
+                                    st["orb_high"] = max(st.get("orb_high", price_val), price_val)
+                                    st["orb_low"] = min(st.get("orb_low", price_val), price_val)
+
+                            # Ingest into Multi-Timeframe Candlestick Engine
+                            candle_engine.add_tick(sym, price_val, now_ts)
 
                             # Update Virtual Paper OMS
                             paper_engine.process_tick(sym, price_val)
@@ -366,22 +444,27 @@ class AngelOneWebSocketManager:
 
     def _run_simulated_tick_feed(self):
         """Fallback simulator for when live credentials are not set."""
-        base_prices = {
-            "RELIANCE": 2750.0,
-            "TCS": 4120.0,
-            "INFY": 1860.0,
-            "HDFCBANK": 1660.0,
-            "ICICIBANK": 1280.0,
-            "SBIN": 820.0,
-            "NIFTY": 24500.0,
-            "BANKNIFTY": 51250.0,
-        }
+        base_prices = dict(self.latest_prices)
         while self.running:
             try:
+                now_ts = time.time()
                 for sym, cur in list(base_prices.items()):
                     step = cur * 0.0004 * random.choice([-1.0, 0.0, 1.0])
                     new_price = round(cur + step, 2)
                     base_prices[sym] = new_price
+                    self.latest_prices[sym] = new_price
+
+                    st = self.market_state.get(sym)
+                    if st:
+                        st["ltp"] = new_price
+                        st["high"] = max(st.get("high", new_price), new_price)
+                        st["low"] = min(st.get("low", new_price), new_price)
+                        prev = st.get("prev_close", new_price)
+                        chg = round(new_price - prev, 2)
+                        st["change"] = chg
+                        st["percent_change"] = round((chg / prev) * 100, 2) if prev > 0 else 0.0
+
+                    candle_engine.add_tick(sym, new_price, now_ts)
                     paper_engine.process_tick(sym, new_price)
                 time.sleep(2)
             except Exception:
@@ -504,6 +587,8 @@ app.add_middleware(
 )
 
 # Attach Service Routers
+app.include_router(dynamic_option_chain_router)
+app.include_router(scanner_router)
 app.include_router(option_chain_router)
 app.include_router(day_trader_router)
 app.include_router(paper_oms_router)

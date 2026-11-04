@@ -608,13 +608,16 @@ def run_scanner(
     # 1. Fetch live in-memory prices and previous closes
     live_prices_map = {}
     prev_closes_map = {}
+    market_state_map = {}
     try:
         import sys
-        main_mod = sys.modules.get("main")
+        main_mod = sys.modules.get("main") or sys.modules.get("backend.main")
         if main_mod:
             if hasattr(main_mod, "feed_manager"):
                 live_prices_map.update(main_mod.feed_manager.latest_prices)
                 prev_closes_map.update(main_mod.feed_manager.previous_closes)
+                if hasattr(main_mod.feed_manager, "market_state"):
+                    market_state_map.update(main_mod.feed_manager.market_state)
             if hasattr(main_mod, "PREVIOUS_CLOSES"):
                 for k, v in main_mod.PREVIOUS_CLOSES.items():
                     if k not in prev_closes_map:
