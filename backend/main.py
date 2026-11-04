@@ -555,11 +555,11 @@ TERMINAL_HTML_PATH = os.path.join(CURRENT_DIR, "templates", "terminal.html")
 
 @app.api_route("/", methods=["GET", "HEAD"], tags=["General"])
 async def root(request: Request = None, format: Optional[str] = Query(default=None)):
-    """Handles GET and HEAD for root route (UptimeRobot monitor)."""
+    """Handles GET and HEAD for root route (UptimeRobot monitor & Pro Trading Desk)."""
     if request and request.method == "HEAD":
         return JSONResponse({"status": "online"})
     accept_header = request.headers.get("accept", "") if request else ""
-    if format != "json" and ("text/html" in accept_header):
+    if format != "json" and ("text/html" in accept_header or "*/*" in accept_header):
         if os.path.exists(TERMINAL_HTML_PATH):
             with open(TERMINAL_HTML_PATH, "r", encoding="utf-8") as f:
                 return HTMLResponse(content=f.read())
