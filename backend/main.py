@@ -865,12 +865,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Admin Access PIN for Personal AI Studio Session Lockdown
-ADMIN_PIN = str(
-    os.getenv("TRADEX_ADMIN_PIN")
-    or os.getenv("ANGEL_PIN")
-    or "984726"
-).strip().strip('"').strip("'")
+# Admin Access PIN for Personal AI Studio Session Lockdown (Owner PIN: 453125)
+ADMIN_PIN = str(os.getenv("TRADEX_ADMIN_PIN", "453125")).strip().strip('"').strip("'")
 
 # CORS Middleware: wildcard * with allow_credentials=False for AI Studio preview iframes (*.scf.usercontent.goog)
 app.add_middleware(
@@ -932,14 +928,19 @@ async def security_and_cors_middleware(request: Request, call_next):
     return response
 
 
-@app.post("/api/auth/verify", tags=["Auth"])
+@app.api_route("/api/auth/verify", methods=["GET", "POST"], tags=["Auth"])
 async def verify_auth_pin(request: Request):
-    """Verifies personal AI Studio PIN and returns authorization status."""
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    pin_val = str(body.get("pin", "")).strip() if isinstance(body, dict) else ""
+    """Verifies owner PIN (supports both JSON POST and GET ?pin=...) and returns authorization status."""
+    pin_val = ""
+    if request.method == "GET":
+        pin_val = str(request.query_params.get("pin", "")).strip()
+    else:
+        try:
+            body = await request.json()
+            pin_val = str(body.get("pin", "")).strip() if isinstance(body, dict) else ""
+        except Exception:
+            pin_val = str(request.query_params.get("pin", "")).strip()
+
     if pin_val == ADMIN_PIN:
         return {"authorized": True}
     return JSONResponse(
