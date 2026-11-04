@@ -19,6 +19,38 @@
 <body class="bg-[#070a11] text-slate-100 font-sans min-h-screen flex flex-col antialiased selection:bg-emerald-500 selection:text-black">
 
   <!-- ===================================================================== -->
+  <!-- OWNER PIN AUTHENTICATION OVERLAY / PRIVATE GATEWAY -->
+  <!-- ===================================================================== -->
+  <div id="owner-auth-screen" class="fixed inset-0 z-[9999] bg-[#070a11]/95 backdrop-blur-2xl flex items-center justify-center p-4">
+    <div class="max-w-md w-full bg-[#0b0f19] border border-emerald-500/30 rounded-2xl p-6 sm:p-8 shadow-2xl shadow-emerald-500/10 text-center relative">
+      <div class="w-14 h-14 mx-auto mb-4 rounded-xl bg-gradient-to-tr from-emerald-500 to-cyan-400 flex items-center justify-center font-black text-slate-950 font-mono text-2xl shadow-lg shadow-emerald-500/30">
+        TX
+      </div>
+      <h2 class="text-xl font-black text-slate-100 tracking-tight">Owner Authorization</h2>
+      <p class="text-xs text-slate-400 font-mono mt-1 mb-6">Enter your 6-digit Owner PIN to unlock the Pro Trading Desk</p>
+      
+      <div class="space-y-4">
+        <div>
+          <input type="password" id="owner-pin-input" maxlength="10" placeholder="••••••" autofocus
+                 onkeydown="if(event.key === 'Enter') submitOwnerPin()"
+                 class="w-full text-center text-3xl tracking-[0.35em] font-mono py-3.5 px-4 bg-[#070a11] border border-slate-700 focus:border-emerald-500 focus:outline-none rounded-xl text-emerald-400 placeholder:text-slate-600 placeholder:tracking-normal placeholder:text-sm" />
+          <p id="owner-pin-error" class="text-xs text-rose-400 font-mono mt-2 hidden">Invalid PIN. Access denied.</p>
+        </div>
+        
+        <button id="owner-unlock-btn" onclick="submitOwnerPin()" 
+                class="w-full py-3.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-bold font-mono rounded-xl shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer">
+          <span>Authorize & Unlock Desk</span>
+        </button>
+        
+        <div class="flex items-center justify-between text-[11px] text-slate-500 font-mono pt-3 border-t border-slate-800/80">
+          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-400 inline-block animate-pulse"></span> Security: Active</span>
+          <span>Owner Session</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
   <!-- TOP HEADER / DESK STATUS BAR -->
   <!-- ===================================================================== -->
   <header class="bg-[#0b0f19]/90 border-b border-slate-800/80 px-4 lg:px-6 py-2.5 sticky top-0 z-50 backdrop-blur-md flex flex-wrap items-center justify-between gap-3">
@@ -64,6 +96,10 @@
         <i data-lucide="clock" class="w-3.5 h-3.5 text-emerald-400"></i>
         <span id="ist-time">--:--:-- IST</span>
       </div>
+      <button onclick="lockDesk()" title="Lock Trading Desk" class="flex items-center gap-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 px-2.5 py-1 rounded-lg text-[11px] font-mono transition cursor-pointer">
+        <i data-lucide="lock" class="w-3.5 h-3.5"></i>
+        <span class="hidden sm:inline">Lock Desk</span>
+      </button>
     </div>
   </header>
 
@@ -334,9 +370,79 @@
   <!-- TRADEx-ALGO JS SCRIPT ENGINE -->
   <!-- ===================================================================== -->
   <script>
-    // Explicit API Base URL Configuration targeting Render Backend
-    const API_BASE = "https://tradex-algo.onrender.com";
-    const WS_BASE = "wss://tradex-algo.onrender.com";
+    // Dynamic API Base URL Configuration targeting Render Backend / Current Host
+    const API_BASE = window.location.origin;
+    const WS_BASE = window.location.origin.replace(/^http/, "ws");
+
+    // Owner PIN State & Global Fetch Interceptor
+    let currentOwnerPin = localStorage.getItem("tradex_owner_pin") || new URLSearchParams(window.location.search).get("pin") || "";
+    let deskFeedsStarted = false;
+    let deskIntervals = [];
+
+    // Automatically inject X-Auth-Pin on EVERY fetch request
+    const originalFetch = window.fetch;
+    window.fetch = function(url, options = {}) {
+      options = options || {};
+      options.headers = options.headers || {};
+      if (currentOwnerPin) {
+        if (options.headers instanceof Headers) {
+          if (!options.headers.has("X-Auth-Pin")) options.headers.set("X-Auth-Pin", currentOwnerPin);
+        } else {
+          if (!options.headers["X-Auth-Pin"]) options.headers["X-Auth-Pin"] = currentOwnerPin;
+        }
+      }
+      return originalFetch(url, options);
+    };
+
+    async function submitOwnerPin() {
+      const pinInput = document.getElementById("owner-pin-input");
+      const errElem = document.getElementById("owner-pin-error");
+      const btn = document.getElementById("owner-unlock-btn");
+      const pin = (pinInput ? pinInput.value : "").trim();
+      
+      if (!pin) {
+        if (errElem) { errElem.innerText = "Please enter your 6-digit Owner PIN."; errElem.classList.remove("hidden"); }
+        return;
+      }
+      
+      btn.disabled = true;
+      btn.innerHTML = `<span>Verifying PIN...</span>`;
+      
+      try {
+        const res = await originalFetch(`${API_BASE}/api/auth/verify?pin=${encodeURIComponent(pin)}`);
+        const data = await res.json();
+        if (res.ok && data.authorized) {
+          currentOwnerPin = pin;
+          localStorage.setItem("tradex_owner_pin", pin);
+          document.getElementById("owner-auth-screen").classList.add("hidden");
+          if (errElem) errElem.classList.add("hidden");
+          showToast("Authorized", "Owner PIN verified. Trading desk unlocked!");
+          startDeskFeeds();
+        } else {
+          if (errElem) { errElem.innerText = "Invalid PIN. Access denied."; errElem.classList.remove("hidden"); }
+        }
+      } catch (ex) {
+        if (errElem) { errElem.innerText = "Connection error: " + ex.message; errElem.classList.remove("hidden"); }
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<span>Authorize & Unlock Desk</span>`;
+      }
+    }
+
+    function lockDesk() {
+      currentOwnerPin = "";
+      localStorage.removeItem("tradex_owner_pin");
+      deskFeedsStarted = false;
+      deskIntervals.forEach(clearInterval);
+      deskIntervals = [];
+      if (window.activeWebSocket) {
+        try { window.activeWebSocket.close(); } catch(e) {}
+      }
+      const pinInput = document.getElementById("owner-pin-input");
+      if (pinInput) pinInput.value = "";
+      document.getElementById("owner-auth-screen").classList.remove("hidden");
+      showToast("Locked", "Trading desk locked.");
+    }
 
     const HEAVYWEIGHT_SYMBOLS = ["RELIANCE", "HDFCBANK", "TCS", "INFY", "SBIN", "ICICIBANK", "LT", "ITC"];
 
@@ -894,10 +1000,13 @@
       }
     }
 
-    // 5. WebSocket Connection to Render
+    // 5. WebSocket Connection to Render (Protected with Owner PIN)
     function initWebSocket() {
+      if (!currentOwnerPin) return;
       try {
-        const ws = new WebSocket(`${WS_BASE}/ws/stream`);
+        const wsUrl = `${WS_BASE}/ws/stream?pin=${encodeURIComponent(currentOwnerPin)}`;
+        const ws = new WebSocket(wsUrl);
+        window.activeWebSocket = ws;
         ws.onopen = () => {
           document.getElementById("ws-dot").className = "w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse-fast";
           document.getElementById("ws-text").innerText = "Live WebSocket (Angel One)";
@@ -905,7 +1014,7 @@
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            if (data.type === "tick_broadcast") {
+            if (data.type === "tick_broadcast" || data.type === "tick") {
               ticksStreamed = data.ticks_streamed || (ticksStreamed + 1);
               document.getElementById("ticks-count").innerText = `${ticksStreamed.toLocaleString()} ticks`;
             }
@@ -914,29 +1023,60 @@
         ws.onclose = () => {
           document.getElementById("ws-dot").className = "w-2.5 h-2.5 rounded-full bg-amber-400";
           document.getElementById("ws-text").innerText = "Reconnecting...";
-          setTimeout(initWebSocket, 3000);
+          if (currentOwnerPin) setTimeout(initWebSocket, 3000);
         };
       } catch (e) {
         console.warn("WebSocket init error:", e);
       }
     }
 
-    // Init Engine
-    window.addEventListener("DOMContentLoaded", () => {
-      lucide.createIcons();
+    function startDeskFeeds() {
+      if (deskFeedsStarted) return;
+      deskFeedsStarted = true;
       fetchState();
       fetchCandles();
       fetchScanner("orb");
       fetchPositions();
       initWebSocket();
 
-      setInterval(fetchState, 2000);
-      setInterval(fetchPositions, 2000);
-      setInterval(fetchCandles, 5000);
-      setInterval(() => {
+      deskIntervals.push(setInterval(fetchState, 2000));
+      deskIntervals.push(setInterval(fetchPositions, 2000));
+      deskIntervals.push(setInterval(fetchCandles, 5000));
+      deskIntervals.push(setInterval(() => {
         if (bottomTab !== "positions") fetchScanner(bottomTab);
-      }, 4000);
-    });
+      }, 4000));
+    }
+
+    // Init Engine with Owner Authentication Check
+    async function checkAuthOnLoad() {
+      lucide.createIcons();
+      updateClock();
+
+      const urlPin = new URLSearchParams(window.location.search).get("pin");
+      if (urlPin) {
+        currentOwnerPin = urlPin;
+      }
+
+      if (currentOwnerPin) {
+        try {
+          const res = await originalFetch(`${API_BASE}/api/auth/verify?pin=${encodeURIComponent(currentOwnerPin)}`);
+          const data = await res.json();
+          if (res.ok && data.authorized) {
+            localStorage.setItem("tradex_owner_pin", currentOwnerPin);
+            document.getElementById("owner-auth-screen").classList.add("hidden");
+            startDeskFeeds();
+            return;
+          }
+        } catch (e) {}
+      }
+
+      // Show PIN entry overlay
+      document.getElementById("owner-auth-screen").classList.remove("hidden");
+      const pinInput = document.getElementById("owner-pin-input");
+      if (pinInput) pinInput.focus();
+    }
+
+    window.addEventListener("DOMContentLoaded", checkAuthOnLoad);
   </script>
 </body>
 </html>

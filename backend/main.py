@@ -1082,10 +1082,18 @@ async def api_health_check(request: Request = None):
     }
 
 
-@app.get("/terminal", tags=["General"])
-def terminal_page():
-    """Disabled public terminal."""
-    return JSONResponse({"status": "locked", "service": "private"}, status_code=404)
+TERMINAL_HTML_PATH = os.path.join(CURRENT_DIR, "templates", "terminal.html")
+
+@app.get("/owner", response_class=HTMLResponse, tags=["Owner Portal"])
+@app.get("/admin", response_class=HTMLResponse, tags=["Owner Portal"])
+@app.get("/portal", response_class=HTMLResponse, tags=["Owner Portal"])
+@app.get("/terminal", response_class=HTMLResponse, tags=["Owner Portal"])
+def owner_portal_page():
+    """Private Owner Portal with dedicated PIN unlock section for authorized trading desk access."""
+    if os.path.exists(TERMINAL_HTML_PATH):
+        with open(TERMINAL_HTML_PATH, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    return HTMLResponse("<h1>Owner portal template not found</h1>", status_code=404)
 
 
 @app.get("/api/debug/feed", tags=["General"])
