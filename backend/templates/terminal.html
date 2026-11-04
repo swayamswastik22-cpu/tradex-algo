@@ -306,13 +306,26 @@
     <div class="bg-[#0b0f19] border border-slate-800 rounded-2xl p-4 sm:p-5 flex flex-col space-y-4">
       <!-- Tabs & Search Header -->
       <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
-        <div class="flex items-center gap-2 font-mono text-xs">
+        <div class="flex flex-wrap items-center gap-2 font-mono text-xs">
           <button id="tab-orb" onclick="switchBottomTab('orb')" class="px-3 py-1.5 rounded-lg bg-emerald-500 text-slate-950 font-bold flex items-center gap-1.5 transition">
             <i data-lucide="radar" class="w-3.5 h-3.5"></i>
-            <span>ORB Breakouts (15-min)</span>
+            <span>ORB Breakouts (15m)</span>
           </button>
-          <button id="tab-20d" onclick="switchBottomTab('20d')" class="px-3 py-1.5 rounded-lg bg-[#070a11] text-slate-400 hover:text-white border border-slate-800 transition">
-            <span>20-Day High Setups</span>
+          <button id="tab-bullflag" onclick="switchBottomTab('bull_flag')" class="px-3 py-1.5 rounded-lg bg-[#070a11] text-slate-400 hover:text-white border border-slate-800 transition flex items-center gap-1.5">
+            <i data-lucide="flag" class="w-3.5 h-3.5 text-amber-400"></i>
+            <span>Bull Flag</span>
+          </button>
+          <button id="tab-20d" onclick="switchBottomTab('20d')" class="px-3 py-1.5 rounded-lg bg-[#070a11] text-slate-400 hover:text-white border border-slate-800 transition flex items-center gap-1.5">
+            <i data-lucide="trending-up" class="w-3.5 h-3.5 text-cyan-400"></i>
+            <span>20-Day High</span>
+          </button>
+          <button id="tab-oversold" onclick="switchBottomTab('oversold')" class="px-3 py-1.5 rounded-lg bg-[#070a11] text-slate-400 hover:text-white border border-slate-800 transition flex items-center gap-1.5">
+            <i data-lucide="corner-down-right" class="w-3.5 h-3.5 text-emerald-400"></i>
+            <span>Oversold Bounce</span>
+          </button>
+          <button id="tab-optionchain" onclick="switchBottomTab('option_chain')" class="px-3 py-1.5 rounded-lg bg-[#070a11] text-amber-400 hover:text-white border border-slate-800 transition flex items-center gap-1.5 font-bold">
+            <i data-lucide="layers" class="w-3.5 h-3.5"></i>
+            <span>Option Chain & PCR</span>
           </button>
           <button id="tab-positions" onclick="switchBottomTab('positions')" class="px-3 py-1.5 rounded-lg bg-[#070a11] text-slate-400 hover:text-white border border-slate-800 transition flex items-center gap-1.5">
             <i data-lucide="briefcase" class="w-3.5 h-3.5"></i>
@@ -321,10 +334,42 @@
         </div>
 
         <div class="flex items-center gap-2 font-mono text-xs">
-          <input type="text" id="scanner-filter" placeholder="Filter stock symbol..." oninput="filterScanner()" class="bg-[#070a11] border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-emerald-500 w-44" />
+          <input type="text" id="scanner-filter" placeholder="Filter symbol..." oninput="filterScanner()" class="bg-[#070a11] border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-emerald-500 w-36" />
           <button onclick="flattenAllPositions()" class="px-3 py-1.5 rounded-lg bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30 transition flex items-center gap-1 font-bold">
             <i data-lucide="alert-octagon" class="w-3.5 h-3.5 text-rose-400"></i> Flatten All
           </button>
+        </div>
+      </div>
+
+      <!-- Option Chain Interactive Toolbar (Visible only when tab is option_chain) -->
+      <div id="optionchain-toolbar" class="hidden flex flex-wrap items-center justify-between gap-3 p-3 bg-[#070a11] border border-slate-800 rounded-xl font-mono text-xs">
+        <div class="flex flex-wrap items-center gap-3">
+          <div class="flex items-center gap-2">
+            <span class="text-slate-400 font-bold">Symbol:</span>
+            <select id="oc-symbol-select" onchange="fetchOptionChainData()" class="bg-[#0b0f19] border border-slate-800 rounded-lg px-2.5 py-1 text-slate-100 font-bold focus:outline-none focus:border-amber-400">
+              <option value="NIFTY">NIFTY</option>
+              <option value="BANKNIFTY">BANKNIFTY</option>
+              <option value="RELIANCE">RELIANCE</option>
+              <option value="HDFCBANK">HDFCBANK</option>
+              <option value="TCS">TCS</option>
+              <option value="INFY">INFY</option>
+              <option value="SBIN">SBIN</option>
+              <option value="ATHERENERG">ATHERENERG</option>
+              <option value="SWIGGY">SWIGGY</option>
+            </select>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-slate-400 font-bold">Expiry:</span>
+            <select id="oc-expiry-select" onchange="fetchOptionChainData()" class="bg-[#0b0f19] border border-slate-800 rounded-lg px-2.5 py-1 text-slate-100 font-bold focus:outline-none focus:border-amber-400">
+              <option value="nearest">Nearest</option>
+            </select>
+          </div>
+        </div>
+        <div id="oc-pcr-banner" class="flex flex-wrap items-center gap-3 text-xs">
+          <span class="text-slate-400">Spot: <b id="oc-spot-disp" class="text-slate-100 font-bold">--</b></span>
+          <span class="text-slate-400">PCR: <b id="oc-pcr-badge" class="px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">--</b></span>
+          <span class="text-slate-400">Total Call OI: <b id="oc-call-oi-disp" class="text-rose-400 font-bold">--</b></span>
+          <span class="text-slate-400">Total Put OI: <b id="oc-put-oi-disp" class="text-emerald-400 font-bold">--</b></span>
         </div>
       </div>
 
@@ -794,27 +839,47 @@
       }
     }
 
-    // 4. Bottom Grid: Scanner & Positions (Zone 4)
+    // 4. Bottom Grid: Scanner, Option Chain & Positions (Zone 4)
     function switchBottomTab(tab) {
       bottomTab = tab;
-      const tOrb = document.getElementById("tab-orb");
-      const t20d = document.getElementById("tab-20d");
-      const tPos = document.getElementById("tab-positions");
+      const tabIds = ["tab-orb", "tab-bullflag", "tab-20d", "tab-oversold", "tab-optionchain", "tab-positions"];
+      const activeMap = {
+        "orb": "tab-orb",
+        "bull_flag": "tab-bullflag",
+        "20d": "tab-20d",
+        "oversold": "tab-oversold",
+        "option_chain": "tab-optionchain",
+        "positions": "tab-positions",
+      };
 
-      tOrb.className = tab === 'orb' ? "px-3 py-1.5 rounded-lg bg-emerald-500 text-slate-950 font-bold flex items-center gap-1.5 transition" : "px-3 py-1.5 rounded-lg bg-[#070a11] text-slate-400 hover:text-white border border-slate-800 transition flex items-center gap-1.5";
-      t20d.className = tab === '20d' ? "px-3 py-1.5 rounded-lg bg-emerald-500 text-slate-950 font-bold transition" : "px-3 py-1.5 rounded-lg bg-[#070a11] text-slate-400 hover:text-white border border-slate-800 transition";
-      tPos.className = tab === 'positions' ? "px-3 py-1.5 rounded-lg bg-emerald-500 text-slate-950 font-bold flex items-center gap-1.5 transition" : "px-3 py-1.5 rounded-lg bg-[#070a11] text-slate-400 hover:text-white border border-slate-800 transition flex items-center gap-1.5";
+      tabIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (id === activeMap[tab]) {
+          el.className = "px-3 py-1.5 rounded-lg bg-emerald-500 text-slate-950 font-bold flex items-center gap-1.5 transition";
+        } else {
+          el.className = "px-3 py-1.5 rounded-lg bg-[#070a11] text-slate-400 hover:text-white border border-slate-800 transition flex items-center gap-1.5";
+        }
+      });
 
-      if (tab === 'positions') {
-        renderPositionsTable();
+      const ocToolbar = document.getElementById("optionchain-toolbar");
+      if (tab === "option_chain") {
+        if (ocToolbar) ocToolbar.classList.remove("hidden");
+        fetchOptionChainData();
       } else {
-        fetchScanner(tab);
+        if (ocToolbar) ocToolbar.classList.add("hidden");
+        if (tab === "positions") {
+          renderPositionsTable();
+        } else {
+          fetchScanner(tab);
+        }
       }
     }
 
     async function fetchScanner(strat = "orb") {
       try {
-        const res = await fetch(`${API_BASE}/api/trader/scanner?strategy=${strat}`);
+        const stratParam = strat === "20d" ? "20d_high" : strat;
+        const res = await fetch(`${API_BASE}/api/trader/scanner?strategy=${stratParam}`);
         if (!res.ok) return;
         const data = await res.json();
         scannerData = data.results || [];
@@ -822,6 +887,118 @@
       } catch (e) {
         console.warn("fetchScanner error:", e);
       }
+    }
+
+    async function fetchOptionChainData() {
+      const symSelect = document.getElementById("oc-symbol-select");
+      const expSelect = document.getElementById("oc-expiry-select");
+      const sym = symSelect ? symSelect.value : "NIFTY";
+      const exp = expSelect ? expSelect.value : "nearest";
+
+      const tbody = document.getElementById("table-body");
+      if (tbody) {
+        tbody.innerHTML = `<tr><td colspan="9" class="text-center py-10 text-slate-400"><i data-lucide="loader" class="w-5 h-5 animate-spin mx-auto mb-2 text-amber-400"></i>Loading Live Option Chain for ${sym}...</td></tr>`;
+        lucide.createIcons();
+      }
+
+      try {
+        const res = await fetch(`${API_BASE}/api/option_chain?symbol=${encodeURIComponent(sym)}&expiry=${encodeURIComponent(exp)}`);
+        if (!res.ok) throw new Error("Failed to load option chain");
+        const oc = await res.json();
+
+        // Update expiry select options
+        if (expSelect && oc.available_expiries && oc.available_expiries.length > 0) {
+          const currentExp = oc.expiry || exp;
+          expSelect.innerHTML = oc.available_expiries.map(e => `<option value="${e}" ${e === currentExp ? 'selected' : ''}>${e}</option>`).join("");
+        }
+
+        // Update PCR & Spot Banner
+        const spotDisp = document.getElementById("oc-spot-disp");
+        const pcrBadge = document.getElementById("oc-pcr-badge");
+        const callOiDisp = document.getElementById("oc-call-oi-disp");
+        const putOiDisp = document.getElementById("oc-put-oi-disp");
+
+        if (spotDisp) spotDisp.innerText = `₹${(oc.underlying_spot || 0).toFixed(2)}`;
+        if (pcrBadge) {
+          const pcrVal = oc.pcr || 0;
+          pcrBadge.innerText = `${pcrVal.toFixed(2)} ${pcrVal >= 1.0 ? '🐂 BULLISH' : (pcrVal <= 0.8 ? '🐻 BEARISH' : '⚖️ NEUTRAL')}`;
+          pcrBadge.className = `px-2 py-0.5 rounded text-[11px] font-bold border ${pcrVal >= 1.0 ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : (pcrVal <= 0.8 ? 'bg-rose-500/20 text-rose-400 border-rose-500/40' : 'bg-amber-500/20 text-amber-400 border-amber-500/40')}`;
+        }
+        if (callOiDisp) callOiDisp.innerText = (oc.total_call_oi || 0).toLocaleString();
+        if (putOiDisp) putOiDisp.innerText = (oc.total_put_oi || 0).toLocaleString();
+
+        renderOptionChainTable(oc);
+      } catch (e) {
+        if (tbody) tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-rose-400">Could not fetch Option Chain: ${e.message}</td></tr>`;
+      }
+    }
+
+    function renderOptionChainTable(oc) {
+      const thead = document.getElementById("table-head-row");
+      thead.innerHTML = `
+        <th class="py-2.5 px-3 text-rose-300">Call OI</th>
+        <th class="py-2.5 px-3 text-rose-300">Call Chg OI</th>
+        <th class="py-2.5 px-3 text-rose-300 font-bold">Call LTP (₹)</th>
+        <th class="py-2.5 px-3 text-center bg-slate-800 text-amber-300 font-black">STRIKE (₹)</th>
+        <th class="py-2.5 px-3 text-emerald-300 font-bold">Put LTP (₹)</th>
+        <th class="py-2.5 px-3 text-emerald-300">Put Chg OI</th>
+        <th class="py-2.5 px-3 text-emerald-300">Put OI</th>
+        <th class="py-2.5 px-3 text-right">Quick Action</th>
+      `;
+
+      const tbody = document.getElementById("table-body");
+      const strikes = oc.strikes || [];
+      if (strikes.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" class="text-center py-8 text-slate-500">No option strikes available for selected expiry.</td></tr>`;
+        return;
+      }
+
+      const spot = oc.underlying_spot || 0;
+      // Find ATM strike closest to spot
+      let closestDiff = Infinity;
+      let atmStrike = 0;
+      strikes.forEach(s => {
+        const d = Math.abs(s.strike - spot);
+        if (d < closestDiff) {
+          closestDiff = d;
+          atmStrike = s.strike;
+        }
+      });
+
+      tbody.innerHTML = strikes.map(s => {
+        const isATM = s.strike === atmStrike;
+        const ce = s.ce || {};
+        const pe = s.pe || {};
+
+        return `<tr class="hover:bg-slate-850 transition ${isATM ? 'bg-amber-950/30 border-y border-amber-500/50' : ''}">
+          <td class="py-2 px-3 font-mono text-slate-400 text-xs">${(ce.oi || 0).toLocaleString()}</td>
+          <td class="py-2 px-3 font-mono text-xs ${(ce.change_oi || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${(ce.change_oi || 0) >= 0 ? '+' : ''}${(ce.change_oi || 0).toLocaleString()}</td>
+          <td class="py-2 px-3 font-mono font-bold text-rose-300 cursor-pointer hover:underline text-xs" onclick="selectOptionForOrder('${oc.symbol}', ${s.strike}, 'CALL', ${ce.ltp || 0})">₹${(ce.ltp || 0).toFixed(2)}</td>
+          <td class="py-2 px-3 font-mono font-black text-center ${isATM ? 'bg-amber-500/20 text-amber-300 ring-1 ring-amber-400/50 rounded' : 'bg-slate-800/60 text-slate-100'} text-xs">
+            ₹${s.strike} ${isATM ? '<span class="text-[9px] px-1 rounded bg-amber-400 text-slate-950 font-bold ml-1">ATM</span>' : ''}
+          </td>
+          <td class="py-2 px-3 font-mono font-bold text-emerald-300 cursor-pointer hover:underline text-xs" onclick="selectOptionForOrder('${oc.symbol}', ${s.strike}, 'PUT', ${pe.ltp || 0})">₹${(pe.ltp || 0).toFixed(2)}</td>
+          <td class="py-2 px-3 font-mono text-xs ${(pe.change_oi || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${(pe.change_oi || 0) >= 0 ? '+' : ''}${(pe.change_oi || 0).toLocaleString()}</td>
+          <td class="py-2 px-3 font-mono text-slate-400 text-xs">${(pe.oi || 0).toLocaleString()}</td>
+          <td class="py-2 px-3 text-right">
+            <button onclick="selectOptionForOrder('${oc.symbol}', ${s.strike}, 'CALL', ${ce.ltp || 0})" class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500 hover:text-white mr-1">CE</button>
+            <button onclick="selectOptionForOrder('${oc.symbol}', ${s.strike}, 'PUT', ${pe.ltp || 0})" class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500 hover:text-slate-950">PE</button>
+          </td>
+        </tr>`;
+      }).join("");
+      lucide.createIcons();
+    }
+
+    function selectOptionForOrder(sym, strike, type, ltp) {
+      setInstrument(type);
+      activeSymbol = sym;
+      const title = document.getElementById("active-symbol-title");
+      if (title) title.innerText = `${sym} ${strike} ${type}`;
+      const ltpDisp = document.getElementById("active-symbol-ltp");
+      if (ltpDisp) ltpDisp.innerText = `₹${ltp.toFixed(2)}`;
+      updateOrderCalculations(ltp);
+      showToast("Option Selected", `Loaded ${sym} ${strike} ${type} @ ₹${ltp.toFixed(2)} into Order Execution card.`);
+      window.scrollTo({ top: 300, behavior: 'smooth' });
     }
 
     function renderScannerTable(items) {

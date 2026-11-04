@@ -602,9 +602,6 @@ def run_scanner(
     symbols: Optional[str] = Query(default=None, description="Comma-separated symbols, or defaults to top NSE stocks"),
 ):
     """Scans Indian NSE stocks for live Opening Range Breakouts, dynamic expiries, OIs, and momentum setups."""
-    symbol_list = [s.strip().upper() for s in symbols.split(",")] if symbols else TOP_NSE_LIQUID_STOCKS
-    results = []
-
     # 1. Fetch live in-memory prices and previous closes
     live_prices_map = {}
     prev_closes_map = {}
@@ -632,6 +629,13 @@ def run_scanner(
                 live_prices_map[k] = v
     except Exception:
         pass
+
+    if symbols:
+        symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    elif live_prices_map:
+        symbol_list = [s for s in live_prices_map.keys() if s not in ["NIFTY", "BANKNIFTY", "SENSEX", "INDIA VIX"]]
+    else:
+        symbol_list = TOP_NSE_LIQUID_STOCKS
 
     # 2. Upcoming expiry dates
     nearest_expiry = None
@@ -709,19 +713,86 @@ def run_scanner(
                 "expiry": nearest_expiry,
                 "range_avg_volume": int(15000 + (sym_hash % 35000)),
             })
-        else:
-            high_20d = round2(prev_close * 1.025)
-            is_breakout = ltp >= high_20d
+        elif strategy in ["bull_flag", "flag"]:
+            # Bull Flag: Uptrend stock (+1.2% to +6%) consolidating tight near day high
+            is_flag = pct >= 1.2
+            flag_top = round2(prev_close * (1 + (pct / 100.0)))
+            stop_loss = round2(ltp * 0.99)
+            risk = max(round2(ltp - stop_loss), round2(ltp * 0.005))
+            target_1 = round2(ltp + (risk * 1.5))
+            target_2 = round2(ltp + (risk * 2.5))
+            status = "triggered" if pct >= 2.0 else ("breakout_in_progress" if is_flag else "waiting")
+
             results.append({
                 "symbol": clean,
-                "strategy": strategy,
+                "strategy": "bull_flag",
+                "status": status,
+                "current_price": round2(ltp),
+                "previous_close": round2(prev_close),
+                "change": chg,
+                "percent_change": pct,
+                "opening_range_high": flag_top,
+                "opening_range_low": round2(ltp * 0.992),
+                "stop_loss": stop_loss,
+                "target_1": target_1,
+                "target_2": target_2,
+                "risk_reward": "1:2",
+                "oi": oi,
+                "pcr": pcr,
+                "expiry": nearest_expiry,
+            })
+        elif strategy in ["oversold", "oversold_bounce"]:
+            # Oversold Bounce: Stock down >= -1.2% stabilizing for a mean-reversion pop
+            is_oversold = pct <= -1.2
+            stop_loss = round2(ltp * 0.988)
+            risk = max(round2(ltp - stop_loss), round2(ltp * 0.005))
+            target_1 = round2(ltp + (risk * 1.5))
+            target_2 = round2(ltp + (risk * 2.5))
+            status = "triggered" if pct <= -2.5 else ("breakout_in_progress" if is_oversold else "waiting")
+
+            results.append({
+                "symbol": clean,
+                "strategy": "oversold_bounce",
+                "status": status,
+                "current_price": round2(ltp),
+                "previous_close": round2(prev_close),
+                "change": chg,
+                "percent_change": pct,
+                "opening_range_high": round2(ltp * 1.01),
+                "opening_range_low": round2(ltp * 0.99),
+                "stop_loss": stop_loss,
+                "target_1": target_1,
+                "target_2": target_2,
+                "risk_reward": "1:1.5",
+                "oi": oi,
+                "pcr": pcr,
+                "expiry": nearest_expiry,
+            })
+        else:
+            # 20-Day High Breakout
+            high_20d = round2(prev_close * 1.025)
+            is_breakout = ltp >= high_20d
+            stop_loss = round2(ltp * 0.985)
+            risk = max(round2(ltp - stop_loss), round2(ltp * 0.005))
+            target_1 = round2(ltp + (risk * 1.5))
+            target_2 = round2(ltp + (risk * 2.5))
+
+            results.append({
+                "symbol": clean,
+                "strategy": "20d_high",
+                "status": "triggered" if is_breakout else ("breakout_in_progress" if pct >= 1.5 else "waiting"),
                 "current_price": round2(ltp),
                 "previous_close": round2(prev_close),
                 "change": chg,
                 "percent_change": pct,
                 "is_breakout_20d": is_breakout,
                 "20_day_high": high_20d,
-                "status": "triggered" if is_breakout else "waiting",
+                "opening_range_high": high_20d,
+                "opening_range_low": round2(prev_close),
+                "stop_loss": stop_loss,
+                "target_1": target_1,
+                "target_2": target_2,
+                "risk_reward": "1:2",
                 "oi": oi,
                 "pcr": pcr,
                 "expiry": nearest_expiry,

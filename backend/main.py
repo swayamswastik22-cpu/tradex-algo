@@ -432,7 +432,7 @@ class AngelOneWebSocketManager:
         if "LIVE" in self.mode:
             self._connect_live_smart_websocket()
         else:
-            self._run_simulated_tick_feed()
+            self._run_market_holding_poller()
 
     def _connect_live_smart_websocket(self):
         """Authenticates via Angel One TOTP session and streams live binary ticks via SmartWebSocketV2."""
@@ -756,14 +756,14 @@ class AngelOneWebSocketManager:
                 logger.warning(f"MarketData poller loop note: {e}")
                 time.sleep(3)
 
-    def _run_simulated_tick_feed(self):
-        """Fallback poller that delegates to live batch quote fetcher."""
+    def _run_market_holding_poller(self):
+        """Holding poller that fetches official Angel One quotes without any simulated or artificial ticks."""
         while self.running:
             try:
                 self.fetch_live_market_quotes_batch()
-                time.sleep(3)
+                time.sleep(10)
             except Exception:
-                time.sleep(3)
+                time.sleep(10)
 
     def subscribe_instrument(self, symbol: str, token: str, exch_seg: str = "NSE") -> bool:
         """Dynamically subscribes a newly selected symbol/token on the active SmartWebSocketV2 feed."""
@@ -906,8 +906,8 @@ async def security_and_cors_middleware(request: Request, call_next):
 
     path = request.url.path
 
-    # 2. Enforce PIN authentication on all /api/* routes (except /api/auth/verify and root/health)
-    if path in ["/", "/health", "/favicon.ico"] or path == "/api/auth/verify":
+    # 2. Enforce PIN authentication on all /api/* routes (except /api/auth/verify, /api/health and root/health)
+    if path in ["/", "/health", "/api/health", "/favicon.ico"] or path == "/api/auth/verify":
         pass
     elif path.startswith("/api"):
         auth_pin = (
@@ -1081,18 +1081,18 @@ async def locked_root_and_health(request: Request = None):
 
 @app.api_route("/api/health", methods=["GET", "HEAD"], tags=["General"])
 async def api_health_check(request: Request = None):
-    """Health check for authenticated API clients."""
-    if request and request.method == "HEAD":
-        return JSONResponse({"status": "healthy"})
-    return {
-        "status": "healthy",
-        "angel_logged_in": angel_auth.logged_in,
-        "mode": feed_manager.mode,
-        "last_tick_time": feed_manager.last_tick_time,
-        "sample_reliance_ltp": feed_manager.latest_prices.get("RELIANCE"),
-        "total_active_prices": len(feed_manager.latest_prices),
-        "auth_error": angel_auth.last_error_msg,
-    }
+    """Health check endpoint for cloud uptime monitors (UptimeRobot)."""
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "healthy",
+            "service": "tradex-algo",
+            "angel_logged_in": angel_auth.logged_in,
+            "mode": feed_manager.mode,
+            "live_count": len(feed_manager.latest_prices),
+            "timestamp": datetime.now().isoformat(),
+        }
+    )
 
 
 TERMINAL_HTML_PATH = os.path.join(CURRENT_DIR, "templates", "terminal.html")
