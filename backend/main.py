@@ -43,6 +43,7 @@ from services.paper_oms import router as paper_oms_router, paper_engine
 from services.backtester import router as backtester_router
 from services.copy_trading_engine import router as copy_trading_router
 from services.candle_engine import candle_engine
+from services.angel_auth import angel_auth
 from routers.scanner import router as scanner_router
 from routers.option_chain import router as dynamic_option_chain_router
 
@@ -116,6 +117,44 @@ TOKEN_TO_SYMBOL: Dict[str, str] = {
     "26009": "BANKNIFTY",
     "99926009": "BANKNIFTY",
 }
+
+# Active WebSocket connections to /ws/stream & global event loop for immediate threadsafe broadcast
+ACTIVE_WS_CLIENTS: List[WebSocket] = []
+GLOBAL_EVENT_LOOP: Optional[asyncio.AbstractEventLoop] = None
+
+
+def broadcast_tick_immediate(sym: str, token: str, price_val: float, high: float, low: float, volume: int, change: float, pct: float):
+    """Broadcasts a live market tick immediately to all connected /ws/stream clients."""
+    if not ACTIVE_WS_CLIENTS or not GLOBAL_EVENT_LOOP or not GLOBAL_EVENT_LOOP.is_running():
+        return
+    try:
+        payload = json.dumps({
+            "type": "tick",
+            "symbol": sym,
+            "token": token,
+            "ltp": price_val,
+            "high": high,
+            "low": low,
+            "volume": volume,
+            "change": change,
+            "percent_change": pct,
+            "timestamp": time.time(),
+        })
+
+        async def _send_all():
+            dead = []
+            for ws in list(ACTIVE_WS_CLIENTS):
+                try:
+                    await ws.send_text(payload)
+                except Exception:
+                    dead.append(ws)
+            for d in dead:
+                if d in ACTIVE_WS_CLIENTS:
+                    ACTIVE_WS_CLIENTS.remove(d)
+
+        asyncio.run_coroutine_threadsafe(_send_all(), GLOBAL_EVENT_LOOP)
+    except Exception:
+        pass
 
 
 class AngelOneWebSocketManager:
@@ -293,30 +332,25 @@ class AngelOneWebSocketManager:
             self._run_simulated_tick_feed()
 
     def _connect_live_smart_websocket(self):
-        """Authenticates via SmartAPI TOTP session and streams live binary ticks via SmartWebSocketV2."""
+        """Authenticates via Angel One TOTP session and streams live binary ticks via SmartWebSocketV2."""
         while self.running:
             try:
-                import pyotp
-                from SmartApi import SmartConnect
                 from SmartApi.smartWebSocketV2 import SmartWebSocketV2
 
-                logger.info("Authenticating with Angel One SmartAPI using TOTP...")
-                totp = pyotp.TOTP(self.totp_secret).now()
-                smart_api = SmartConnect(api_key=self.api_key)
-                session = smart_api.generateSession(self.client_code, self.pin, totp)
-
-                if not session.get("status"):
-                    logger.warning(f"Angel One session failed: {session.get('message')}. Retrying in 10s...")
-                    time.sleep(10)
+                # 1. Dynamic authentication using fresh TOTP
+                auth_res = angel_auth.generate_session()
+                if not auth_res.get("status"):
+                    logger.warning(f"Angel One session failed: {auth_res.get('message')}. Retrying in 15s...")
+                    time.sleep(15)
                     continue
 
-                session_data = session.get("data", {})
-                jwt_token = session_data.get("jwtToken")
-                feed_token = session_data.get("feedToken")
-                self.user_name = session_data.get("name", "Angel One Client")
-                logger.info(f"Angel One Authenticated for: {self.user_name} ({self.client_code})")
+                jwt_token = auth_res["jwtToken"]
+                feed_token = auth_res["feedToken"]
+                client_code = auth_res["client_code"]
+                api_key = auth_res["api_key"]
+                self.user_name = auth_res["name"]
 
-                # Build fast dictionary lookup and resolved integer tokens
+                # 2. Build fast dictionary lookup and resolved integer tokens
                 equity_tokens, idx_tokens, token_map, sym_map = self._fetch_scrip_master()
                 self.token_to_symbol = token_map
                 self.symbol_to_token = sym_map
@@ -325,14 +359,15 @@ class AngelOneWebSocketManager:
                     f"Resolved Token Lookup: {len(sym_map)} symbols, {len(equity_tokens)} Equity tokens, {len(idx_tokens)} Index tokens."
                 )
 
+                # 3. Initialize SmartWebSocketV2 directly with fresh tokens
                 sws = SmartWebSocketV2(
                     auth_token=jwt_token,
-                    api_key=self.api_key,
-                    client_code=self.client_code,
+                    api_key=api_key,
+                    client_code=client_code,
                     feed_token=feed_token,
                     retry_strategy=1,
                     retry_delay=5,
-                    max_retry_attempt=15,
+                    max_retry_attempt=10,
                 )
                 self.sws = sws
 
@@ -351,8 +386,15 @@ class AngelOneWebSocketManager:
 
                         token = str(message.get("token", "")).strip()
                         raw_ltp = message.get("last_traded_price") or message.get("ltp") or 0.0
-                        # Last traded price in Angel One binary ticks is given in paise (100 paise = 1 INR)
                         ltp = float(raw_ltp) / 100.0 if raw_ltp > 0 else 0.0
+
+                        raw_high = message.get("high_price_of_the_day") or message.get("high") or message.get("high_price") or 0.0
+                        day_high = float(raw_high) / 100.0 if raw_high > 0 else None
+
+                        raw_low = message.get("low_price_of_the_day") or message.get("low") or message.get("low_price") or 0.0
+                        day_low = float(raw_low) / 100.0 if raw_low > 0 else None
+
+                        volume = int(message.get("volume_traded_for_the_day") or message.get("volume") or 0)
                         sym = self.token_to_symbol.get(token) or TOKEN_TO_SYMBOL.get(token, f"NSE_{token}")
 
                         if ltp > 0:
@@ -362,69 +404,89 @@ class AngelOneWebSocketManager:
                             now_iso = now_dt.isoformat()
                             now_ts = now_dt.timestamp()
 
-                            # Print received tick to console log
+                            # Print received tick
                             print(f"[TICK] {sym:<10} (Token: {token:<8}) -> LTP: Rs {price_val:>9.2f} | Time: {now_str}", flush=True)
 
-                            # Update manager state & global dictionary immediately
                             self.ticks_count += 1
                             self.last_tick_time = now_iso
                             self.latest_prices[sym] = price_val
 
-                            # Update market_state for real-time live scanner & candle engine
-                            st = self.market_state.get(sym)
                             prev_close = self.previous_closes.get(sym, price_val)
-                            if st is None:
-                                st = {
-                                    "symbol": sym,
-                                    "ltp": price_val,
-                                    "high": price_val,
-                                    "low": price_val,
-                                    "open": price_val,
-                                    "prev_close": prev_close,
-                                    "change": round(price_val - prev_close, 2),
-                                    "percent_change": round(((price_val - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0,
-                                    "orb_high": round(prev_close * 1.006, 2),
-                                    "orb_low": round(prev_close * 0.994, 2),
-                                    "volume": 0,
-                                    "last_tick_time": now_iso,
-                                }
-                                self.market_state[sym] = st
-                            else:
-                                st["ltp"] = price_val
-                                st["high"] = max(st.get("high", price_val), price_val)
-                                st["low"] = min(st.get("low", price_val), price_val)
-                                chg = round(price_val - prev_close, 2)
-                                st["change"] = chg
-                                st["percent_change"] = round((chg / prev_close) * 100, 2) if prev_close > 0 else 0.0
-                                st["last_tick_time"] = now_iso
+                            final_high = day_high if day_high else max(price_val, prev_close)
+                            final_low = day_low if day_low else min(price_val, prev_close)
+                            chg = round(price_val - prev_close, 2)
+                            pct = round(((price_val - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
 
-                                # Live Opening Range Window (09:15 - 09:30 IST)
-                                if now_dt.hour == 9 and 15 <= now_dt.minute <= 30:
-                                    st["orb_high"] = max(st.get("orb_high", price_val), price_val)
-                                    st["orb_low"] = min(st.get("orb_low", price_val), price_val)
+                            st = self.market_state.get(sym) or {}
+                            final_high = max(st.get("high", final_high), final_high)
+                            final_low = min(st.get("low", final_low), final_low)
 
-                            # Ingest into Multi-Timeframe Candlestick Engine
+                            orb_high = st.get("orb_high", round(prev_close * 1.006, 2))
+                            orb_low = st.get("orb_low", round(prev_close * 0.994, 2))
+                            if now_dt.hour == 9 and 15 <= now_dt.minute <= 30:
+                                orb_high = max(orb_high, price_val)
+                                orb_low = min(orb_low, price_val)
+
+                            tick_record = {
+                                "token": token,
+                                "symbol": sym,
+                                "ltp": price_val,
+                                "high": round(final_high, 2),
+                                "low": round(final_low, 2),
+                                "open": price_val,
+                                "prev_close": prev_close,
+                                "change": chg,
+                                "percent_change": pct,
+                                "volume": volume,
+                                "orb_high": round(orb_high, 2),
+                                "orb_low": round(orb_low, 2),
+                                "last_tick_time": now_iso,
+                            }
+                            # Update global market_state for both symbol and token
+                            self.market_state[sym] = tick_record
+                            self.market_state[token] = tick_record
+
                             candle_engine.add_tick(sym, price_val, now_ts)
-
-                            # Update Virtual Paper OMS
                             paper_engine.process_tick(sym, price_val)
+
+                            # Broadcast immediately to all connected frontend clients
+                            broadcast_tick_immediate(sym, token, price_val, final_high, final_low, volume, chg, pct)
+
                     except Exception as ex:
                         logger.error(f"Tick parse error: {ex}")
 
                 def on_open(wsapp):
-                    logger.info("Angel One SmartWebSocketV2 connected! Subscribing with resolved tokens...")
+                    logger.info("Angel One SmartWebSocketV2 connected! Chunk-subscribing tokens in batches of 50...")
                     print(
-                        f"[WS OPEN] Subscribing {len(equity_tokens)} equities (exchangeType 1) "
-                        f"and {len(idx_tokens)} indices (exchangeType 3 & 1)...",
+                        f"[WS OPEN] Subscribing {len(equity_tokens)} equities & {len(idx_tokens)} indices in chunks of 50...",
                         flush=True,
                     )
-                    # Indices like NIFTY/BANKNIFTY are sent with exchangeType 3 (and 1), Equities like RELIANCE use exchangeType 1
-                    token_list = [
-                        {"exchangeType": 1, "tokens": [str(t) for t in equity_tokens]},
-                        {"exchangeType": 3, "tokens": [str(t) for t in idx_tokens]},
-                        {"exchangeType": 1, "tokens": [str(t) for t in idx_tokens]},
-                    ]
-                    sws.subscribe("algo_feed_sub", 1, token_list)
+
+                    def chunks(lst, n):
+                        for i in range(0, len(lst), n):
+                            yield lst[i:i + n]
+
+                    mode = 1  # LTP mode
+                    # Chunk subscriptions to prevent socket reset by Angel One server
+                    for idx, chunk in enumerate(chunks(equity_tokens, 50)):
+                        token_payload = [{"exchangeType": 1, "tokens": [str(t) for t in chunk]}]
+                        sws.subscribe(f"tradex_stream_eq_{idx}", mode, token_payload)
+                        logger.info(f"Subscribed equity chunk {idx + 1} ({len(chunk)} tokens)")
+                        time.sleep(0.2)
+
+                    if idx_tokens:
+                        sws.subscribe(
+                            "tradex_stream_idx_3",
+                            mode,
+                            [{"exchangeType": 3, "tokens": [str(t) for t in idx_tokens]}]
+                        )
+                        time.sleep(0.2)
+                        sws.subscribe(
+                            "tradex_stream_idx_1",
+                            mode,
+                            [{"exchangeType": 1, "tokens": [str(t) for t in idx_tokens]}]
+                        )
+                    print("[WS OPEN] All token batches successfully subscribed in LTP mode.", flush=True)
 
                 def on_error(*args, **kwargs):
                     logger.warning(f"Angel One WebSocket Error: {args} {kwargs}")
@@ -507,31 +569,42 @@ class AngelOneWebSocketManager:
 feed_manager = AngelOneWebSocketManager()
 
 
-# Active WebSocket connections to /ws/stream
-ACTIVE_WS_CLIENTS: List[WebSocket] = []
-
-
 async def broadcast_ws_loop():
-    """Broadcasts real-time prices to all active /ws/stream clients every 500ms."""
+    """Broadcasts real-time prices & 20s keep-alive heartbeat to all /ws/stream clients."""
+    last_heartbeat_time = time.time()
     while True:
         try:
             await asyncio.sleep(0.5)
             if not ACTIVE_WS_CLIENTS:
                 continue
 
+            now_time = time.time()
+            # Send real-time tick stream snapshot
             payload = json.dumps({
                 "type": "tick_stream",
                 "timestamp": datetime.now().isoformat(),
                 "live_prices": feed_manager.latest_prices,
                 "ticks_count": feed_manager.ticks_count,
                 "mode": feed_manager.mode,
-                "status": "connected"
+                "status": "connected",
             })
 
+            # 20s Render keep-alive heartbeat frame
+            send_hb = (now_time - last_heartbeat_time) >= 20.0
+            if send_hb:
+                hb_payload = json.dumps({
+                    "type": "heartbeat",
+                    "timestamp": now_time,
+                    "status": "alive",
+                })
+                last_heartbeat_time = now_time
+
             dead_clients = []
-            for client in ACTIVE_WS_CLIENTS:
+            for client in list(ACTIVE_WS_CLIENTS):
                 try:
                     await client.send_text(payload)
+                    if send_hb:
+                        await client.send_text(hb_payload)
                 except Exception:
                     dead_clients.append(client)
 
@@ -550,6 +623,8 @@ async def broadcast_ws_loop():
 # ==========================================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global GLOBAL_EVENT_LOOP
+    GLOBAL_EVENT_LOOP = asyncio.get_running_loop()
     # Startup: launch background market tick thread & ws broadcaster
     feed_manager.start()
     broadcaster = asyncio.create_task(broadcast_ws_loop())
@@ -615,7 +690,7 @@ def subscribe_feed_symbol(
 
 @app.websocket("/ws/stream")
 async def websocket_stream_endpoint(websocket: WebSocket):
-    """Real-time streaming WebSocket endpoint for UI clients."""
+    """Real-time streaming WebSocket endpoint for UI clients with 20s heartbeat keep-alive for Render."""
     await websocket.accept()
     ACTIVE_WS_CLIENTS.append(websocket)
     try:
@@ -624,14 +699,49 @@ async def websocket_stream_endpoint(websocket: WebSocket):
             "type": "snapshot",
             "timestamp": datetime.now().isoformat(),
             "live_prices": feed_manager.latest_prices,
+            "market_state": feed_manager.market_state,
             "ticks_count": feed_manager.ticks_count,
             "mode": feed_manager.mode,
-            "status": "connected"
+            "status": "connected",
         })
         await websocket.send_text(snapshot)
-        while True:
-            # Keep alive and handle client message pings
-            _ = await websocket.receive_text()
+
+        async def heartbeat_loop():
+            """Continuously broadcasts heartbeat frame every 20s to prevent Render load balancer disconnects."""
+            while True:
+                await asyncio.sleep(20)
+                try:
+                    await websocket.send_json({
+                        "type": "heartbeat",
+                        "timestamp": time.time(),
+                        "status": "alive",
+                    })
+                except (WebSocketDisconnect, asyncio.CancelledError):
+                    break
+                except Exception:
+                    break
+
+        async def client_listener():
+            """Listens for incoming client messages / ping frames cleanly."""
+            while True:
+                try:
+                    msg = await websocket.receive_text()
+                    if "ping" in msg.lower():
+                        await websocket.send_json({"type": "pong", "timestamp": time.time()})
+                except (WebSocketDisconnect, asyncio.CancelledError):
+                    break
+                except Exception:
+                    break
+
+        hb_task = asyncio.create_task(heartbeat_loop())
+        listen_task = asyncio.create_task(client_listener())
+
+        done, pending = await asyncio.wait(
+            [hb_task, listen_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
     except (WebSocketDisconnect, Exception):
         pass
     finally:
