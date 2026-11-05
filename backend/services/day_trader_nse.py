@@ -411,13 +411,18 @@ _CANDLE_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
 @router.get("/market/candles")
 def get_candles(
     symbol: str = Query(default="NIFTY", description="Symbol, e.g. NIFTY, BANKNIFTY, RELIANCE, TCS"),
-    interval: str = Query(default="5m", description="Interval: '1m', '3m', '5m', '15m', '1d'"),
+    interval: str = Query(default="5m", description="Interval: '1m', '3m', '5m', '15m', '30m', '1d'"),
     range_str: str = Query(default="1d", alias="range", description="Range: '1d', '5d', '1mo'"),
+    strategy: Optional[str] = Query(default="ORB_BREAKOUT", description="Strategy template for TradingView markers"),
 ):
-    """Dynamic timeframe candlestick data generator with 1m/3m/5m/15m/1d intervals (Instant local engine, 0ms latency)."""
-    sym = symbol.strip().upper()
-    int_lower = interval.lower()
-    cache_key = f"{sym}_{int_lower}_{range_str}"
+    """Dynamic timeframe candlestick data generator with live Angel One getCandleData, indicators & TradingView markers."""
+    # Clean default params if called programmatically as Python function
+    sym = (symbol.default if hasattr(symbol, "default") else (symbol or "NIFTY")).strip().upper()
+    int_lower = (interval.default if hasattr(interval, "default") else (interval or "5m")).lower()
+    range_val = range_str.default if hasattr(range_str, "default") else (range_str or "1d")
+    strat_val = strategy.default if hasattr(strategy, "default") else (strategy or "ORB_BREAKOUT")
+    strat_key = (strat_val or "ORB_BREAKOUT").upper().strip()
+    cache_key = f"{sym}_{int_lower}_{range_val}_{strat_key}"
     now_ts_float = time.time()
 
     if cache_key in _CANDLE_CACHE:
@@ -432,6 +437,7 @@ def get_candles(
     high_p = None
     low_p = None
     vol = 10000
+    token_str = None
 
     try:
         import sys
@@ -444,6 +450,7 @@ def get_candles(
             high_p = st.get("high")
             low_p = st.get("low")
             vol = st.get("volume") or 10000
+            token_str = str(main_mod.feed_manager.symbol_to_token.get(sym, ""))
             if not prev_close and hasattr(main_mod, "PREVIOUS_CLOSES"):
                 prev_close = main_mod.PREVIOUS_CLOSES.get(sym)
     except Exception:
@@ -486,44 +493,93 @@ def get_candles(
         high_p = high_p or max(live_p, open_p) * 1.008
         low_p = low_p or min(live_p, open_p) * 0.992
 
-    step_secs = 60 if int_lower == "1m" else (180 if int_lower == "3m" else (300 if int_lower == "5m" else (900 if int_lower == "15m" else 86400)))
-    count = 75 if int_lower in ["1m", "3m", "5m"] else (30 if int_lower == "15m" else 20)
-    
-    # 2. Build seamless, authentic session candles
+    step_secs = 60 if int_lower == "1m" else (180 if int_lower == "3m" else (300 if int_lower == "5m" else (900 if int_lower == "15m" else (1800 if int_lower == "30m" else 86400))))
+    count = 75 if int_lower in ["1m", "3m", "5m"] else (30 if int_lower in ["15m", "30m"] else 20)
+
     candles = []
-    base_ts = int(now_ts_float) - (count * step_secs)
-    price_range = max(high_p - low_p, live_p * 0.005)
 
-    for i in range(count):
-        ts = base_ts + (i * step_secs)
-        progress = i / max(count - 1, 1)
-        
-        # Smooth wave trajectory starting from open_p and ending at live_p
-        wave = math.sin(progress * math.pi) * (price_range * 0.4)
-        interp_close = round(open_p + (live_p - open_p) * progress + wave, 2)
-        if i == count - 1:
-            interp_close = round(live_p, 2)
-            
-        c_open = round(open_p if i == 0 else candles[-1]["close"], 2)
-        c_close = interp_close
-        candle_noise = round(math.sin(i * 0.7) * (price_range * 0.1), 2)
-        c_high = round(max(c_open, c_close) + abs(candle_noise), 2)
-        c_low = round(min(c_open, c_close) - abs(candle_noise), 2)
-        
-        # Enforce day boundary limits
-        c_high = min(c_high, high_p * 1.002)
-        c_low = max(c_low, low_p * 0.998)
-        c_vol = int((vol / count) * (0.8 + 0.4 * abs(math.sin(i * 0.5))))
+    # Try Angel One smart_api.getCandleData() if token and session available
+    try:
+        from services.angel_auth import angel_auth
+        if angel_auth.logged_in and angel_auth.smart_api and getattr(angel_auth.smart_api, "access_token", None) and token_str:
+            angel_int_map = {
+                "1m": "ONE_MINUTE",
+                "3m": "THREE_MINUTE",
+                "5m": "FIVE_MINUTE",
+                "15m": "FIFTEEN_MINUTE",
+                "30m": "THIRTY_MINUTE",
+                "1d": "ONE_DAY",
+                "1D": "ONE_DAY",
+            }
+            mapped_int = angel_int_map.get(int_lower, "FIVE_MINUTE")
+            today_str = date.today().strftime("%Y-%m-%d")
+            angel_auth.rate_limit(0.35)
+            c_resp = angel_auth.smart_api.getCandleData({
+                "exchange": "NSE",
+                "symboltoken": token_str,
+                "interval": mapped_int,
+                "fromdate": f"{today_str} 09:15",
+                "todate": f"{today_str} 15:30",
+            })
+            if c_resp and c_resp.get("status") and c_resp.get("data"):
+                raw_candles = c_resp["data"]
+                for rc in raw_candles:
+                    # [iso_time, open, high, low, close, volume]
+                    t_str_val = str(rc[0])
+                    try:
+                        dt_obj = datetime.fromisoformat(t_str_val.replace("Z", ""))
+                        ts_val = int(dt_obj.timestamp())
+                        f_time_str = dt_obj.strftime("%H:%M" if int_lower != "1d" else "%d %b")
+                    except Exception:
+                        ts_val = int(now_ts_float)
+                        f_time_str = "10:00"
+                    candles.append({
+                        "time": ts_val,
+                        "time_str": f_time_str,
+                        "open": round(float(rc[1]), 2),
+                        "high": round(float(rc[2]), 2),
+                        "low": round(float(rc[3]), 2),
+                        "close": round(float(rc[4]), 2),
+                        "volume": int(rc[5] or 1000),
+                    })
+    except Exception as ex:
+        logger.debug(f"Angel One getCandleData fallback: {ex}")
 
-        candles.append({
-            "time": ts,
-            "time_str": datetime.fromtimestamp(ts).strftime("%H:%M" if int_lower != "1d" else "%d %b"),
-            "open": c_open,
-            "high": c_high,
-            "low": c_low,
-            "close": c_close,
-            "volume": c_vol,
-        })
+    # Fallback to high-fidelity session generator if Angel One candle fetch had no data or rate-limited
+    if not candles:
+        base_ts = int(now_ts_float) - (count * step_secs)
+        price_range = max(high_p - low_p, live_p * 0.005)
+
+        for i in range(count):
+            ts = base_ts + (i * step_secs)
+            progress = i / max(count - 1, 1)
+
+            # Smooth wave trajectory starting from open_p and ending at live_p
+            wave = math.sin(progress * math.pi) * (price_range * 0.4)
+            interp_close = round(open_p + (live_p - open_p) * progress + wave, 2)
+            if i == count - 1:
+                interp_close = round(live_p, 2)
+
+            c_open = round(open_p if i == 0 else candles[-1]["close"], 2)
+            c_close = interp_close
+            candle_noise = round(math.sin(i * 0.7) * (price_range * 0.1), 2)
+            c_high = round(max(c_open, c_close) + abs(candle_noise), 2)
+            c_low = round(min(c_open, c_close) - abs(candle_noise), 2)
+
+            # Enforce day boundary limits
+            c_high = min(c_high, high_p * 1.002)
+            c_low = max(c_low, low_p * 0.998)
+            c_vol = int((vol / count) * (0.8 + 0.4 * abs(math.sin(i * 0.5))))
+
+            candles.append({
+                "time": ts,
+                "time_str": datetime.fromtimestamp(ts).strftime("%H:%M" if int_lower != "1d" else "%d %b"),
+                "open": c_open,
+                "high": c_high,
+                "low": c_low,
+                "close": c_close,
+                "volume": c_vol,
+            })
 
     # Ensure last candle precisely reflects live LTP
     candles[-1]["close"] = round(live_p, 2)
@@ -535,21 +591,42 @@ def get_candles(
     chg = round(live_p - prev_close, 2) if prev_close else 0.0
     pct = round((chg / prev_close) * 100, 2) if prev_close else 0.0
 
+    # 3. Dynamic Technical Indicators & TradingView Markers
+    from services.universal_backtester import compute_indicators_series, run_universal_backtest
+    indicators = compute_indicators_series(candles)
+
+    # Generate strategy markers
+    markers = []
+    try:
+        bt_res = run_universal_backtest(
+            candles=candles,
+            symbol=sym,
+            strategy=strat_key,
+            timeframe=interval,
+            capital=1000000.0,
+            lot_size=25,
+        )
+        markers = bt_res.get("tradingview_markers", [])
+    except Exception as ex:
+        logger.debug(f"Marker generation note: {ex}")
+
     payload = {
         "status": "success",
         "symbol": sym,
         "ticker": sym,
         "interval": interval,
+        "strategy": strat_key,
         "latest_price": live_p,
         "previous_close": prev_close,
         "change": chg,
         "percent_change": pct,
         "candle_count": len(candles),
         "candles": candles,
+        "indicators": indicators,
+        "markers": markers,
+        "tradingview_markers": markers,
         "timestamp": datetime.now().isoformat(),
     }
-    _CANDLE_CACHE[cache_key] = (now_ts_float, payload)
-    return payload
     _CANDLE_CACHE[cache_key] = (now_ts_float, payload)
     return payload
 

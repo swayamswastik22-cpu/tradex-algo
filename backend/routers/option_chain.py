@@ -232,34 +232,30 @@ def _fetch_nfo_batch_quotes(tokens: List[str]) -> Dict[str, Dict[str, Any]]:
         for i in range(0, len(lst), n):
             yield lst[i:i + n]
 
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    def fetch_chunk(chunk):
-        res_items = []
-        if not angel_auth.logged_in:
-            return []
+    chunk_list = list(chunks(tokens, 45))
+    fetched_items = []
+    for chunk in chunk_list:
+        if not angel_auth.logged_in or not angel_auth.smart_api:
+            break
         try:
+            angel_auth.rate_limit(0.35)
             resp = angel_auth.smart_api.getMarketData("FULL", {"NFO": chunk})
             if resp and not resp.get("status"):
                 err_code = str(resp.get("errorCode", "") or resp.get("errorcode", "")).upper()
                 msg = str(resp.get("message", "")).lower()
                 if err_code in ["AG8003", "AG8001", "AB1004"] or "token missing" in msg:
                     angel_auth.logged_in = False
-                    return []
+                    break
                 if angel_auth.handle_api_response(resp):
+                    angel_auth.rate_limit(0.35)
                     resp = angel_auth.smart_api.getMarketData("FULL", {"NFO": chunk})
             if resp and resp.get("status") and resp.get("data", {}).get("fetched"):
-                res_items = resp["data"]["fetched"]
+                fetched_items.extend(resp["data"]["fetched"])
         except Exception as ex:
             logger.debug(f"Option quote batch chunk error: {ex}")
-        return res_items
+            break
 
-    chunk_list = list(chunks(tokens, 45))
-    with ThreadPoolExecutor(max_workers=min(4, len(chunk_list) or 1)) as executor:
-        future_to_chunk = {executor.submit(fetch_chunk, ch): ch for ch in chunk_list}
-        for future in as_completed(future_to_chunk):
-            fetched_items = future.result()
-            for item in fetched_items:
+    for item in fetched_items:
                 tok = str(item.get("symbolToken", "")).strip()
                 trading_sym = str(item.get("tradingSymbol", "")).strip()
                 ltp = float(item.get("ltp") or 0.0)

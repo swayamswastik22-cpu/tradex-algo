@@ -15,7 +15,10 @@ from SmartApi import SmartConnect
 from dotenv import load_dotenv
 
 # Suppress noisy internal error logs from smartConnect library
-logging.getLogger("smartConnect").setLevel(logging.CRITICAL)
+for log_name in ["smartConnect", "SmartApi", "smartWebSocketV2", "urllib3"]:
+    lg = logging.getLogger(log_name)
+    lg.setLevel(logging.CRITICAL)
+    lg.propagate = False
 try:
     import logzero
     logzero.loglevel(logging.CRITICAL)
@@ -49,6 +52,8 @@ class AngelAuthManager:
 
     def __init__(self):
         self._auth_lock = threading.Lock()
+        self._request_lock = threading.Lock()
+        self._last_req_time = 0.0
         self.api_key: str = ""
         self.client_code: str = ""
         self.pin: str = ""
@@ -95,6 +100,15 @@ class AngelAuthManager:
             self.last_error_msg = f"Missing environment variables: {', '.join(missing)}"
         return configured
 
+    def rate_limit(self, min_delay: float = 0.35):
+        """Enforces institutional rate limit between consecutive Angel One REST API calls."""
+        with self._request_lock:
+            now = time.time()
+            elapsed = now - self._last_req_time
+            if elapsed < min_delay:
+                time.sleep(min_delay - elapsed)
+            self._last_req_time = time.time()
+
     def generate_session(self) -> Dict[str, Any]:
         """Dynamically logs into Angel One using fresh TOTP and returns fresh tokens (Thread-safe & Atomic)."""
         with self._auth_lock:
@@ -127,18 +141,9 @@ class AngelAuthManager:
                     msg = session.get("message") if session else "Empty session response"
                     self.last_error_msg = str(msg)
                     logger.warning(f"Angel One session generation notice: {msg}")
-                    # If we already have a functioning smart_api, do not destroy it on a rate-limit hiccup
-                    if self.smart_api and getattr(self.smart_api, "access_token", None):
-                        return {
-                            "status": True,
-                            "jwtToken": self.jwt_token,
-                            "refreshToken": self.refresh_token,
-                            "feedToken": self.feed_token,
-                            "name": self.user_name,
-                            "client_code": self.client_code,
-                            "api_key": self.api_key,
-                        }
                     self.logged_in = False
+                    self.smart_api = None
+                    self.jwt_token = ""
                     return {"status": False, "message": msg}
 
                 data = session.get("data", {})
@@ -219,8 +224,11 @@ class AngelAuthManager:
             err_code = str(resp.get("errorCode", "") or resp.get("errorcode", "")).upper()
             msg = str(resp.get("message", "")).lower()
             if err_code in ["AG8003", "AG8001", "AB1004"] or "token missing" in msg or "invalid token" in msg:
+                self.logged_in = False
+                self.smart_api = None
+                self.jwt_token = ""
                 now = time.time()
-                if now - getattr(self, "_last_reauth_time", 0) > 10:
+                if now - getattr(self, "_last_reauth_time", 0) > 5:
                     self._last_reauth_time = now
                     logger.warning(f"Angel One session expired ({err_code}: {resp.get('message')}). Auto-refreshing session with fresh TOTP...")
                     auth_res = self.generate_session()

@@ -331,6 +331,18 @@
             <i data-lucide="briefcase" class="w-3.5 h-3.5"></i>
             <span>Active Positions (<b id="pos-count-badge">0</b>)</span>
           </button>
+          <button id="tab-backtest" onclick="switchBottomTab('backtest')" class="px-3 py-1.5 rounded-lg bg-[#070a11] text-purple-400 hover:text-white border border-purple-500/30 transition flex items-center gap-1.5 font-bold">
+            <i data-lucide="cpu" class="w-3.5 h-3.5"></i>
+            <span>Quant Backtest (4-Mode)</span>
+          </button>
+          <button id="tab-journal" onclick="switchBottomTab('journal')" class="px-3 py-1.5 rounded-lg bg-[#070a11] text-cyan-400 hover:text-white border border-cyan-500/30 transition flex items-center gap-1.5 font-bold">
+            <i data-lucide="book-open" class="w-3.5 h-3.5"></i>
+            <span>Trade Journal</span>
+          </button>
+          <button id="tab-livearm" onclick="switchBottomTab('livearm')" class="px-3 py-1.5 rounded-lg bg-[#070a11] text-rose-400 hover:text-white border border-rose-500/30 transition flex items-center gap-1.5 font-bold">
+            <i data-lucide="shield-alert" class="w-3.5 h-3.5"></i>
+            <span>Live Safety Lock</span>
+          </button>
         </div>
 
         <div class="flex items-center gap-2 font-mono text-xs">
@@ -460,10 +472,10 @@
         try {
           data = JSON.parse(text);
         } catch (e) {
-          if (res.status === 502 || res.status === 503 || text.includes("Bad Gateway") || text.includes("<!doctype")) {
-            throw new Error("Server is waking up / restarting. Please wait 10 seconds and click Authorize again.");
+          if (res.status === 502 || res.status === 503 || text.includes("Bad Gateway") || text.includes("<!doctype") || text.includes("<html")) {
+            throw new Error("Backend is waking up / restarting (~20s cold start). Please click Authorize again in a few seconds.");
           }
-          throw new Error(`Server returned HTTP ${res.status}.`);
+          throw new Error("Backend initializing. Please wait a moment and click Authorize again.");
         }
 
         if (res.ok && data.authorized) {
@@ -866,7 +878,7 @@
     // 4. Bottom Grid: Scanner, Option Chain & Positions (Zone 4)
     function switchBottomTab(tab) {
       bottomTab = tab;
-      const tabIds = ["tab-orb", "tab-bullflag", "tab-20d", "tab-oversold", "tab-optionchain", "tab-positions"];
+      const tabIds = ["tab-orb", "tab-bullflag", "tab-20d", "tab-oversold", "tab-optionchain", "tab-positions", "tab-backtest", "tab-journal", "tab-livearm"];
       const activeMap = {
         "orb": "tab-orb",
         "bull_flag": "tab-bullflag",
@@ -874,6 +886,9 @@
         "oversold": "tab-oversold",
         "option_chain": "tab-optionchain",
         "positions": "tab-positions",
+        "backtest": "tab-backtest",
+        "journal": "tab-journal",
+        "livearm": "tab-livearm",
       };
 
       tabIds.forEach(id => {
@@ -894,6 +909,12 @@
         if (ocToolbar) ocToolbar.classList.add("hidden");
         if (tab === "positions") {
           renderPositionsTable();
+        } else if (tab === "backtest") {
+          renderBacktestPanel();
+        } else if (tab === "journal") {
+          fetchTradeJournal();
+        } else if (tab === "livearm") {
+          fetchLiveArmStatus();
         } else {
           fetchScanner(tab);
         }
@@ -1207,6 +1228,272 @@
       }
     }
 
+    // 4b. Quant Algo Backtester (4-Mode Comparison Matrix)
+    function renderBacktestPanel() {
+      const thead = document.getElementById("table-head-row");
+      thead.innerHTML = `
+        <th class="py-2.5 px-3">Execution Mode</th>
+        <th class="py-2.5 px-3">Win Rate</th>
+        <th class="py-2.5 px-3">Gross P&L</th>
+        <th class="py-2.5 px-3 text-amber-400">2026 Friction</th>
+        <th class="py-2.5 px-3">Net P&L</th>
+        <th class="py-2.5 px-3">Profit Factor</th>
+        <th class="py-2.5 px-3">Expectancy</th>
+        <th class="py-2.5 px-3">Whipsaw Trades</th>
+        <th class="py-2.5 px-3 text-right">Action</th>
+      `;
+
+      const tbody = document.getElementById("table-body");
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="9" class="p-4 bg-[#070a11]">
+            <div class="flex flex-wrap items-center justify-between gap-3 p-3 bg-[#0d1322] border border-purple-500/30 rounded-xl mb-4 font-mono text-xs">
+              <div class="flex flex-wrap items-center gap-3">
+                <span class="text-purple-400 font-bold">Strategy:</span>
+                <select id="bt-strat-select" class="bg-[#070a11] border border-slate-700 rounded-lg px-2.5 py-1 text-slate-100 font-bold focus:outline-none focus:border-purple-400">
+                  <option value="ORB_BREAKOUT">ORB 15m Breakout</option>
+                  <option value="VWAP_BOUNCE">VWAP Alpha Bounce</option>
+                  <option value="SUPERTREND_FLIP">Supertrend (10,3) Flip</option>
+                  <option value="EMA_CROSS">EMA 9/21 Dynamic Cross</option>
+                  <option value="MEAN_REVERSION">Mean Reversion Bands</option>
+                </select>
+                <span class="text-slate-400 font-bold">Symbol:</span>
+                <input type="text" id="bt-symbol-input" value="${activeSymbol}" class="bg-[#070a11] border border-slate-700 rounded-lg px-2 py-1 text-slate-100 font-bold w-24 uppercase focus:outline-none focus:border-purple-400" />
+                <span class="text-slate-400 font-bold">TF:</span>
+                <select id="bt-tf-select" class="bg-[#070a11] border border-slate-700 rounded-lg px-2 py-1 text-slate-100 font-bold focus:outline-none">
+                  <option value="5m" selected>5m</option>
+                  <option value="15m">15m</option>
+                  <option value="3m">3m</option>
+                  <option value="1m">1m</option>
+                </select>
+              </div>
+              <button onclick="runBacktestFromUI()" class="px-4 py-2 rounded-lg bg-gradient-to-r from-purple-500 to-indigo-500 text-white font-bold hover:brightness-110 transition shadow-lg shadow-purple-500/20 flex items-center gap-1.5 cursor-pointer">
+                <i data-lucide="play" class="w-3.5 h-3.5"></i> Run 4-Mode Backtest
+              </button>
+            </div>
+            <div id="bt-results-container" class="text-center py-6 text-slate-500 font-mono text-xs">
+              Select strategy and click "Run 4-Mode Backtest" to evaluate ATM Buy, Deep ITM Buy, ATM Sell, and Futures side-by-side with 2026 Indian brokerage & friction.
+            </div>
+          </td>
+        </tr>
+      `;
+      lucide.createIcons();
+    }
+
+    async function runBacktestFromUI() {
+      const strat = document.getElementById("bt-strat-select").value;
+      const sym = document.getElementById("bt-symbol-input").value.trim().toUpperCase() || "NIFTY";
+      const tf = document.getElementById("bt-tf-select").value || "5m";
+      const container = document.getElementById("bt-results-container");
+
+      container.innerHTML = `<i data-lucide="loader" class="w-6 h-6 animate-spin mx-auto mb-2 text-purple-400"></i>Running 4-Mode Backtest & 2026 Friction calculation for ${sym} (${strat})...`;
+      lucide.createIcons();
+
+      try {
+        const res = await fetch(`${API_BASE}/api/algo/backtest`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ symbol: sym, strategy: strat, timeframe: tf }),
+        });
+        if (!res.ok) throw new Error("Backtest request failed");
+        const data = await res.json();
+        const comp = data.mode_comparison || {};
+        const bestMode = data.best_execution_mode || "ATM_BUY";
+
+        let html = `
+          <div class="mb-3 p-3 bg-purple-950/30 border border-purple-500/40 rounded-xl flex items-center justify-between text-xs">
+            <span class="text-slate-200">Optimal Mode: <b class="text-emerald-400">${bestMode}</b> | Total Trades: <b class="text-slate-100">${data.total_trades || 0}</b></span>
+            <span class="text-cyan-400">Net Expectancy: ₹${(data.expectancy_per_trade || 0).toFixed(2)}/trade</span>
+          </div>
+          <table class="w-full text-left text-xs font-mono">
+            <tbody class="divide-y divide-slate-800">
+        `;
+
+        const modes = ["ATM_BUY", "DEEP_ITM_BUY", "ATM_SELL", "FUTURES"];
+        modes.forEach(m => {
+          const row = comp[m] || {};
+          const isBest = m === bestMode;
+          const isNetPos = (row.net_pnl || 0) >= 0;
+          html += `
+            <tr class="hover:bg-slate-800/40 ${isBest ? 'bg-purple-950/20' : ''}">
+              <td class="py-2.5 px-3 font-bold ${isBest ? 'text-purple-300' : 'text-slate-300'}">${m} ${isBest ? '<span class="text-[9px] bg-purple-500/20 border border-purple-500/40 px-1 py-0.2 rounded ml-1 text-purple-300">BEST</span>' : ''}</td>
+              <td class="py-2.5 px-3 text-cyan-300 font-bold">${(row.win_rate || 0).toFixed(1)}%</td>
+              <td class="py-2.5 px-3 text-slate-200">₹${(row.gross_pnl || 0).toFixed(2)}</td>
+              <td class="py-2.5 px-3 text-amber-400 font-bold">₹${(row.total_friction || 0).toFixed(2)}</td>
+              <td class="py-2.5 px-3 font-bold ${isNetPos ? 'text-emerald-400' : 'text-rose-400'}">${isNetPos ? '+' : ''}₹${(row.net_pnl || 0).toFixed(2)}</td>
+              <td class="py-2.5 px-3 text-slate-300">${(row.profit_factor || 0).toFixed(2)}</td>
+              <td class="py-2.5 px-3 text-slate-300">₹${(row.expectancy || 0).toFixed(2)}</td>
+              <td class="py-2.5 px-3 text-rose-400">${row.whipsaw_count || 0}</td>
+              <td class="py-2.5 px-3 text-right">
+                <button onclick="deployStrategyFromBT('${strat}', '${sym}', '${m}')" class="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 border border-emerald-500/40">
+                  Deploy
+                </button>
+              </td>
+            </tr>
+          `;
+        });
+        html += `</tbody></table>`;
+        container.innerHTML = html;
+      } catch (e) {
+        container.innerHTML = `<span class="text-rose-400">Backtest error: ${e.message}</span>`;
+      }
+    }
+
+    async function deployStrategyFromBT(strategy, symbol, mode) {
+      try {
+        const res = await fetch(`${API_BASE}/api/algo/deploy`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ strategy: strategy, symbol: symbol, mode: "PAPER" }),
+        });
+        const data = await res.json();
+        showToast("Deployed", `Strategy ${strategy} on ${symbol} deployed in PAPER mode.`);
+      } catch (e) {
+        showToast("Error", "Could not deploy strategy.", true);
+      }
+    }
+
+    // 4c. Automated Trade Journal
+    async function fetchTradeJournal() {
+      const thead = document.getElementById("table-head-row");
+      thead.innerHTML = `
+        <th class="py-2.5 px-3">Time</th>
+        <th class="py-2.5 px-3">Symbol / Contract</th>
+        <th class="py-2.5 px-3">Strategy</th>
+        <th class="py-2.5 px-3">Mode</th>
+        <th class="py-2.5 px-3">Qty</th>
+        <th class="py-2.5 px-3">Gross P&L</th>
+        <th class="py-2.5 px-3 text-amber-400">2026 Friction</th>
+        <th class="py-2.5 px-3">Net P&L</th>
+        <th class="py-2.5 px-3 text-right">Status</th>
+      `;
+
+      const tbody = document.getElementById("table-body");
+      tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-slate-500"><i data-lucide="loader" class="w-5 h-5 animate-spin mx-auto mb-2 text-cyan-400"></i>Loading Trade Journal...</td></tr>`;
+      lucide.createIcons();
+
+      try {
+        const res = await fetch(`${API_BASE}/api/journal`);
+        if (!res.ok) throw new Error("Failed to load trade journal");
+        const data = await res.json();
+        const trades = data.trades || [];
+
+        if (trades.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-slate-500">No trades recorded yet. Paper & Live algorithmic orders sync here automatically.</td></tr>`;
+          return;
+        }
+
+        tbody.innerHTML = trades.slice(0, 30).map(t => {
+          const isNetPos = (t.net_pnl || 0) >= 0;
+          return `
+            <tr class="hover:bg-slate-800/40 font-mono text-xs">
+              <td class="py-2.5 px-3 text-slate-400">${t.timestamp ? t.timestamp.substring(11, 19) : '--'}</td>
+              <td class="py-2.5 px-3 font-bold text-slate-100">${t.symbol}</td>
+              <td class="py-2.5 px-3 text-cyan-300">${t.strategy}</td>
+              <td class="py-2.5 px-3"><span class="px-1.5 py-0.2 rounded font-bold ${t.mode === 'LIVE' ? 'bg-rose-950 text-rose-400' : 'bg-slate-800 text-slate-300'}">${t.mode}</span></td>
+              <td class="py-2.5 px-3 text-slate-300">${t.qty || 1}</td>
+              <td class="py-2.5 px-3 text-slate-200">₹${(t.gross_pnl || 0).toFixed(2)}</td>
+              <td class="py-2.5 px-3 text-amber-400">₹${(t.total_friction || 0).toFixed(2)}</td>
+              <td class="py-2.5 px-3 font-bold ${isNetPos ? 'text-emerald-400' : 'text-rose-400'}">${isNetPos ? '+' : ''}₹${(t.net_pnl || 0).toFixed(2)}</td>
+              <td class="py-2.5 px-3 text-right"><span class="px-1.5 py-0.2 rounded font-bold text-[10px] ${t.status === 'CLOSED' ? 'bg-emerald-950 text-emerald-400' : 'bg-cyan-950 text-cyan-400'}">${t.status || 'CLOSED'}</span></td>
+            </tr>
+          `;
+        }).join("");
+        lucide.createIcons();
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-rose-400">Failed to load journal: ${e.message}</td></tr>`;
+      }
+    }
+
+    // 4d. Live Safety Lock (Double Lock UI)
+    async function fetchLiveArmStatus() {
+      const thead = document.getElementById("table-head-row");
+      thead.innerHTML = `
+        <th class="py-2.5 px-3">Live Safety Lock Layer</th>
+        <th class="py-2.5 px-3">Current Status</th>
+        <th class="py-2.5 px-3">Time Remaining</th>
+        <th class="py-2.5 px-3">Authorization Requirement</th>
+        <th class="py-2.5 px-3 text-right">Controls</th>
+      `;
+
+      const tbody = document.getElementById("table-body");
+      try {
+        const res = await fetch(`${API_BASE}/api/algo/status`);
+        const st = await res.json();
+        const isArmed = st.algo_live_armed;
+
+        tbody.innerHTML = `
+          <tr class="font-mono text-xs">
+            <td class="py-3 px-3 font-bold text-slate-200">Layer 1: Server Runtime Live Arm</td>
+            <td class="py-3 px-3"><span class="px-2 py-0.5 rounded font-bold ${isArmed ? 'bg-rose-500 text-white' : 'bg-slate-800 text-slate-400'}">${isArmed ? 'ARMED (LIVE READY)' : 'DISARMED (PAPER LOCKED)'}</span></td>
+            <td class="py-3 px-3 text-slate-300">${isArmed ? `${st.armed_seconds_remaining}s remaining` : '0s'}</td>
+            <td class="py-3 px-3 text-slate-400">Owner PIN 453125</td>
+            <td class="py-3 px-3 text-right">
+              ${isArmed ? `
+                <button onclick="disarmLiveUI()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold border border-slate-700">Disarm Live</button>
+              ` : `
+                <button onclick="armLiveUI()" class="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold shadow-lg shadow-rose-600/30">Arm Live (60m)</button>
+              `}
+            </td>
+          </tr>
+          <tr class="font-mono text-xs">
+            <td class="py-3 px-3 font-bold text-slate-200">Layer 2: Payload Confirmation</td>
+            <td class="py-3 px-3"><span class="text-slate-400">Explicit Order Guard</span></td>
+            <td class="py-3 px-3 text-slate-300">Every Order</td>
+            <td class="py-3 px-3 text-rose-300">{"confirmation": "TRADE LIVE"}</td>
+            <td class="py-3 px-3 text-right">
+              <span class="text-xs text-slate-500">Enforced by Engine</span>
+            </td>
+          </tr>
+          <tr class="font-mono text-xs bg-rose-950/20">
+            <td class="py-3 px-3 font-bold text-rose-300">Intraday Square-Off</td>
+            <td class="py-3 px-3 text-slate-300">Auto at 15:00 IST</td>
+            <td class="py-3 px-3 text-slate-300">Daily Intraday</td>
+            <td class="py-3 px-3 text-slate-400">Closes All Live Positions</td>
+            <td class="py-3 px-3 text-right">
+              <button onclick="emergencySquareOffUI()" class="px-3 py-1.5 rounded-lg bg-rose-500 text-white font-bold hover:bg-rose-400">Square Off All Now</button>
+            </td>
+          </tr>
+        `;
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center py-6 text-rose-400">Failed to check Live Lock status: ${e.message}</td></tr>`;
+      }
+    }
+
+    async function armLiveUI() {
+      try {
+        const res = await fetch(`${API_BASE}/api/algo/arm-live`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ duration_minutes: 60 }),
+        });
+        showToast("Live Armed", "Live execution armed for 60 minutes.");
+        fetchLiveArmStatus();
+      } catch (e) {
+        showToast("Error", "Could not arm live execution.", true);
+      }
+    }
+
+    async function disarmLiveUI() {
+      try {
+        await fetch(`${API_BASE}/api/algo/disarm-live`, { method: "POST" });
+        showToast("Disarmed", "Live execution disarmed. Mode locked to PAPER.");
+        fetchLiveArmStatus();
+      } catch (e) {
+        showToast("Error", "Could not disarm.", true);
+      }
+    }
+
+    async function emergencySquareOffUI() {
+      try {
+        await fetch(`${API_BASE}/api/algo/square-off`, { method: "POST" });
+        showToast("Square Off", "Emergency square-off command sent.");
+        fetchLiveArmStatus();
+      } catch (e) {
+        showToast("Error", "Square off command failed.", true);
+      }
+    }
+
     // 5. WebSocket Connection to Render (Protected with Owner PIN)
     function initWebSocket() {
       if (!currentOwnerPin) return;
@@ -1267,8 +1554,10 @@
       if (currentOwnerPin) {
         try {
           const res = await originalFetch(`${API_BASE}/api/auth/verify?pin=${encodeURIComponent(currentOwnerPin)}`);
-          const data = await res.json();
-          if (res.ok && data.authorized) {
+          const text = await res.text();
+          let data = {};
+          try { data = JSON.parse(text); } catch (e) {}
+          if (res.ok && data && data.authorized) {
             localStorage.setItem("tradex_owner_pin", currentOwnerPin);
             document.getElementById("owner-auth-screen").classList.add("hidden");
             startDeskFeeds();

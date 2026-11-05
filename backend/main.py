@@ -54,8 +54,10 @@ from services.backtester import router as backtester_router
 from services.copy_trading_engine import router as copy_trading_router
 from services.candle_engine import candle_engine
 from services.angel_auth import angel_auth
+from services.algo_execution_engine import algo_engine
 from routers.scanner import router as scanner_router
 from routers.option_chain import router as dynamic_option_chain_router
+from routers.algo import router as algo_router
 
 # Configure logging
 logging.basicConfig(
@@ -258,52 +260,12 @@ class AngelOneWebSocketManager:
             local_cache = os.path.join(CURRENT_DIR, "OpenAPIScripMaster.json")
             raw_instruments = None
 
-            # 1. Download live Angel One Scrip Master if not already loaded or cache older than 12h
-            is_fresh_cache = os.path.exists(local_cache) and (time.time() - os.path.getmtime(local_cache) < 43200)
-            if is_fresh_cache:
+            # Load local pre-filtered ScripMaster cache directly (RAM protected, strictly <50MB, zero 120MB network download)
+            if os.path.exists(local_cache):
                 try:
                     with open(local_cache, "r", encoding="utf-8") as f:
                         raw_instruments = json.load(f)
-                    logger.info(f"Loaded {len(raw_instruments)} instruments from fresh daily ScripMaster cache.")
-                except Exception as e:
-                    logger.warning(f"Failed to read local cache: {e}")
-
-            if not raw_instruments:
-                urls = [
-                    "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json",
-                    "https://margincalculator.angelbroking.com/OpenAPI_File/OpenAPIScripMaster.json",
-                    "https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json",
-                ]
-                for url in urls:
-                    try:
-                        logger.info(f"Downloading live Angel One ScripMaster from: {url}")
-                        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=25)
-                        if resp.status_code == 200 and "application/json" in resp.headers.get("content-type", ""):
-                            downloaded = resp.json()
-                            raw_instruments = [
-                                item for item in downloaded
-                                if str(item.get("name", "")).upper().strip().replace("-EQ", "") in target_names
-                                or str(item.get("symbol", "")).upper().strip().replace("-EQ", "") in target_names
-                                or str(item.get("token", "")).strip() in ["26000", "26009", "99926000", "99926009", "99919000", "99926017", "1"]
-                            ]
-                            del downloaded
-                            gc.collect()
-                            try:
-                                with open(local_cache, "w", encoding="utf-8") as f:
-                                    json.dump(raw_instruments, f)
-                                logger.info(f"Downloaded and cached {len(raw_instruments)} filtered instruments (RAM protected).")
-                            except Exception:
-                                pass
-                            break
-                    except Exception as ex:
-                        logger.warning(f"Live ScripMaster download attempt failed ({url}): {ex}")
-
-            # Fallback to local cache if network download was unreachable
-            if not raw_instruments and os.path.exists(local_cache):
-                try:
-                    with open(local_cache, "r", encoding="utf-8") as f:
-                        raw_instruments = json.load(f)
-                    logger.info(f"Loaded {len(raw_instruments)} instruments from local ScripMaster cache.")
+                    logger.info(f"Loaded {len(raw_instruments)} pre-filtered instruments from local ScripMaster cache (RAM safe).")
                 except Exception as e:
                     logger.warning(f"Failed to read local cache: {e}")
 
@@ -595,6 +557,7 @@ class AngelOneWebSocketManager:
 
                             candle_engine.add_tick(sym, price_val, now_ts)
                             paper_engine.process_tick(sym, price_val)
+                            algo_engine.process_live_tick(sym, price_val)
 
                             # Broadcast immediately to all connected frontend clients
                             broadcast_tick_immediate(sym, token, price_val, final_high, final_low, volume, chg, pct, prev_close)
@@ -673,6 +636,7 @@ class AngelOneWebSocketManager:
 
         # 1. Fetch Official Index Quotes (NIFTY, BANKNIFTY, SENSEX, INDIA VIX)
         try:
+            angel_auth.rate_limit(0.35)
             # NSE Indices: NIFTY (26000, 99926000), BANKNIFTY (26009, 99926009), INDIA VIX (99926017)
             idx_resp_nse = angel_auth.smart_api.getMarketData("FULL", {"NSE": ["26000", "99926000", "26009", "99926009", "99926017"]})
             if idx_resp_nse and idx_resp_nse.get("status") and idx_resp_nse.get("data", {}).get("fetched"):
@@ -725,6 +689,7 @@ class AngelOneWebSocketManager:
             logger.debug(f"NSE Index quote fetch note: {ex}")
 
         try:
+            angel_auth.rate_limit(0.35)
             # BSE Indices: SENSEX (99919000, 1)
             idx_resp_bse = angel_auth.smart_api.getMarketData("FULL", {"BSE": ["99919000", "1"]})
             if idx_resp_bse and idx_resp_bse.get("status") and idx_resp_bse.get("data", {}).get("fetched"):
@@ -776,9 +741,10 @@ class AngelOneWebSocketManager:
                 yield lst[i:i + n]
 
         for chunk in chunks(tokens, 45):
-            if not angel_auth.logged_in:
+            if not angel_auth.logged_in or not angel_auth.smart_api:
                 break
             try:
+                angel_auth.rate_limit(0.35)
                 token_strs = [str(t) for t in chunk]
                 resp = angel_auth.smart_api.getMarketData("FULL", {"NSE": token_strs})
                 if resp and not resp.get("status"):
@@ -862,30 +828,33 @@ class AngelOneWebSocketManager:
 
                         candle_engine.add_tick(sym, ltp, now_ts)
                         paper_engine.process_tick(sym, ltp)
+                        algo_engine.process_live_tick(sym, ltp)
 
             except Exception as ex:
                 logger.debug(f"Market quotes batch fetch note: {ex}")
             time.sleep(1.2)
 
     def _run_market_data_poll_loop(self):
-        """Continuously polls Angel One getMarketData every 3 seconds to keep all 218 FNO quotes fresh."""
-        logger.info("Angel One REST MarketData Poller started (3s interval).")
+        """Polls Angel One getMarketData in a gentle background loop with adaptive intervals."""
+        logger.info("Angel One REST MarketData Poller started.")
         while self.running:
             try:
                 self.fetch_live_market_quotes_batch()
-                time.sleep(3)
+                # If WebSocket is streaming live ticks, sleep 25s; otherwise sleep 8s
+                sleep_sec = 25 if self.ticks_count > 0 else 8
+                time.sleep(sleep_sec)
             except Exception as e:
                 logger.warning(f"MarketData poller loop note: {e}")
-                time.sleep(3)
+                time.sleep(10)
 
     def _run_market_holding_poller(self):
         """Holding poller that fetches official Angel One quotes without any simulated or artificial ticks."""
         while self.running:
             try:
                 self.fetch_live_market_quotes_batch()
-                time.sleep(10)
+                time.sleep(20)
             except Exception:
-                time.sleep(10)
+                time.sleep(20)
 
     def subscribe_instrument(self, symbol: str, token: str, exch_seg: str = "NSE") -> bool:
         """Dynamically subscribes a newly selected symbol/token on the active SmartWebSocketV2 feed."""
@@ -1106,6 +1075,7 @@ app.include_router(day_trader_router)
 app.include_router(paper_oms_router)
 app.include_router(backtester_router)
 app.include_router(copy_trading_router)
+app.include_router(algo_router)
 
 
 @app.post("/api/feed/subscribe", tags=["Market Feed"])
@@ -1331,6 +1301,7 @@ async def get_system_state():
         ticker_data[sym] = {
             "symbol": sym,
             "ltp": ltp,
+            "price": ltp,
             "current_price": ltp,
             "prev_close": prev_close,
             "previous_close": prev_close,
