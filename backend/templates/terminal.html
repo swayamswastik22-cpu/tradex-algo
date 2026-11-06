@@ -627,16 +627,19 @@
 
     function updateActiveSymbolHeader() {
       const tData = liveState.ticker_data || {};
-      const item = tData[activeSymbol] || { ltp: 1307.9, change: 0, change_pct: 0 };
+      const item = tData[activeSymbol] || { ltp: 1000.0, change: 0, change_pct: 0 };
+      const ltpVal = Number(item.ltp || item.price || item.current_price || 0);
+      const chgVal = Number(item.change !== undefined ? item.change : (item.net_change || 0));
+      const pctVal = Number(item.change_pct !== undefined ? item.change_pct : (item.pct_change !== undefined ? item.pct_change : (item.percent_change || 0)));
       document.getElementById("active-symbol-title").innerText = activeSymbol;
-      document.getElementById("active-symbol-ltp").innerText = `₹${item.ltp ? item.ltp.toFixed(2) : '--'}`;
-      const isUp = item.change >= 0;
-      document.getElementById("active-symbol-chg").innerText = `(${isUp ? '+' : ''}${item.change_pct.toFixed(2)}%)`;
+      document.getElementById("active-symbol-ltp").innerText = `₹${ltpVal ? ltpVal.toFixed(2) : '--'}`;
+      const isUp = chgVal >= 0;
+      document.getElementById("active-symbol-chg").innerText = `${isUp ? '+' : ''}₹${chgVal.toFixed(2)} (${isUp ? '+' : ''}${pctVal.toFixed(2)}%)`;
       document.getElementById("active-symbol-chg").className = `text-xs font-bold font-mono ${isUp ? 'text-emerald-400' : 'text-rose-400'}`;
 
       // Update Order card input
       document.getElementById("order-symbol").value = activeSymbol;
-      updateOrderCalculations(item.ltp || 1000.0);
+      updateOrderCalculations(ltpVal || 1000.0);
     }
 
     function switchSymbol(sym) {
@@ -676,11 +679,13 @@
 
     async function fetchCandles() {
       try {
-        const url = `${API_BASE}/api/market/candles?symbol=${encodeURIComponent(activeSymbol)}&interval=${activeTimeframe}`;
-        const res = await fetch(url);
+        const pinParam = ownerPin ? `&pin=${encodeURIComponent(ownerPin)}` : '';
+        const url = `${API_BASE}/api/market/candles?symbol=${encodeURIComponent(activeSymbol)}&interval=${activeTimeframe}${pinParam}`;
+        const headers = ownerPin ? { 'X-Auth-Pin': ownerPin } : {};
+        const res = await fetch(url, { headers });
         if (!res.ok) return;
         const data = await res.json();
-        candlesData = data.candles || [];
+        candlesData = data.candles || data.data || [];
         if (candlesData.length > 0) {
           const last = candlesData[candlesData.length - 1];
           document.getElementById("ohlc-header").innerText = `O: ₹${last.open} | H: ₹${last.high} | L: ₹${last.low} | C: ₹${last.close} | Vol: ${last.volume}`;
@@ -924,7 +929,9 @@
     async function fetchScanner(strat = "orb") {
       try {
         const stratParam = strat === "20d" ? "20d_high" : strat;
-        const res = await fetch(`${API_BASE}/api/trader/scanner?strategy=${stratParam}`);
+        const pinParam = ownerPin ? `&pin=${encodeURIComponent(ownerPin)}` : '';
+        const headers = ownerPin ? { 'X-Auth-Pin': ownerPin } : {};
+        const res = await fetch(`${API_BASE}/api/trader/scanner?strategy=${stratParam}${pinParam}`, { headers });
         if (!res.ok) return;
         const data = await res.json();
         scannerData = data.results || [];
