@@ -688,6 +688,8 @@ class AngelOneWebSocketManager:
 
     def fetch_live_market_quotes_batch(self):
         """Fetches real-time market quotes via Angel One REST API getMarketData for all 218 FNO stocks in chunks of 45."""
+        if not angel_auth.is_configured():
+            return
         if not angel_auth.smart_api or not getattr(angel_auth.smart_api, "access_token", None) or not angel_auth.logged_in:
             auth_res = angel_auth.generate_session()
             if not auth_res.get("status"):
@@ -911,22 +913,24 @@ class AngelOneWebSocketManager:
         logger.info("Angel One REST MarketData Poller started.")
         while self.running:
             try:
+                if not angel_auth.is_configured():
+                    time.sleep(30)
+                    continue
                 self.fetch_live_market_quotes_batch()
-                # If WebSocket is streaming live ticks, sleep 25s; otherwise sleep 8s
-                sleep_sec = 25 if self.ticks_count > 0 else 8
+                # If WebSocket is streaming live ticks, sleep 25s; otherwise sleep 10s
+                sleep_sec = 25 if self.ticks_count > 0 else 10
                 time.sleep(sleep_sec)
             except Exception as e:
                 logger.warning(f"MarketData poller loop note: {e}")
-                time.sleep(10)
+                time.sleep(15)
 
     def _run_market_holding_poller(self):
-        """Holding poller that fetches official Angel One quotes without any simulated or artificial ticks."""
+        """Holding poller that runs gently without duplicate requests."""
         while self.running:
             try:
-                self.fetch_live_market_quotes_batch()
-                time.sleep(20)
+                time.sleep(30)
             except Exception:
-                time.sleep(20)
+                time.sleep(30)
 
     def subscribe_instrument(self, symbol: str, token: str, exch_seg: str = "NSE") -> bool:
         """Dynamically subscribes a newly selected symbol/token on the active SmartWebSocketV2 feed."""

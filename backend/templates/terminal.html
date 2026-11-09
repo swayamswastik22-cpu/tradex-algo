@@ -952,48 +952,71 @@
           if (loader) loader.classList.add("hidden");
 
           if (!tvChart) initTvChart();
-          if (candleSeries) candleSeries.setData(unique);
-          if (volumeSeries) {
-            volumeSeries.setData(unique.map(c => ({
-              time: c.time,
-              value: c.volume,
-              color: c.close >= c.open ? "rgba(16, 185, 129, 0.35)" : "rgba(244, 63, 94, 0.35)",
-            })));
-          }
 
-          const closes = unique.map(c => c.close);
-          const ema9Vals = calculateEMA(closes, 9);
-          const ema21Vals = calculateEMA(closes, 21);
+          const symOrTfChanged = (window.lastLoadedSym !== activeSymbol) || (window.lastLoadedTf !== activeTimeframe);
+          if (symOrTfChanged || !window.chartHasData) {
+            window.lastLoadedSym = activeSymbol;
+            window.lastLoadedTf = activeTimeframe;
+            window.chartHasData = true;
 
-          if (ema9Series) {
-            if (showEma9) {
-              ema9Series.setData(unique.map((c, idx) => ({ time: c.time, value: ema9Vals[idx] || c.close })));
-            } else {
-              ema9Series.setData([]);
+            if (candleSeries) candleSeries.setData(unique);
+            if (volumeSeries) {
+              volumeSeries.setData(unique.map(c => ({
+                time: c.time,
+                value: c.volume,
+                color: c.close >= c.open ? "rgba(16, 185, 129, 0.35)" : "rgba(244, 63, 94, 0.35)",
+              })));
             }
-          }
 
-          if (ema21Series) {
-            if (showEma21) {
-              ema21Series.setData(unique.map((c, idx) => ({ time: c.time, value: ema21Vals[idx] || c.close })));
-            } else {
-              ema21Series.setData([]);
+            const closes = unique.map(c => c.close);
+            const ema9Vals = calculateEMA(closes, 9);
+            const ema21Vals = calculateEMA(closes, 21);
+
+            if (ema9Series) {
+              if (showEma9) {
+                ema9Series.setData(unique.map((c, idx) => ({ time: c.time, value: ema9Vals[idx] || c.close })));
+              } else {
+                ema9Series.setData([]);
+              }
             }
-          }
 
-          if (vwapSeries) {
-            if (showVwap) {
-              let cumVol = 0;
-              let cumPV = 0;
-              const vwapData = unique.map(c => {
-                const typ = (c.high + c.low + c.close) / 3;
-                cumVol += c.volume || 1;
-                cumPV += typ * (c.volume || 1);
-                return { time: c.time, value: cumPV / cumVol };
-              });
-              vwapSeries.setData(vwapData);
-            } else {
-              vwapSeries.setData([]);
+            if (ema21Series) {
+              if (showEma21) {
+                ema21Series.setData(unique.map((c, idx) => ({ time: c.time, value: ema21Vals[idx] || c.close })));
+              } else {
+                ema21Series.setData([]);
+              }
+            }
+
+            if (vwapSeries) {
+              if (showVwap) {
+                let cumVol = 0;
+                let cumPV = 0;
+                const vwapData = unique.map(c => {
+                  const typ = (c.high + c.low + c.close) / 3;
+                  cumVol += c.volume || 1;
+                  cumPV += typ * (c.volume || 1);
+                  return { time: c.time, value: cumPV / cumVol };
+                });
+                vwapSeries.setData(vwapData);
+              } else {
+                vwapSeries.setData([]);
+              }
+            }
+          } else {
+            // Smooth live forming candle update without viewport jitter
+            const lastBar = unique[unique.length - 1];
+            if (candleSeries && lastBar) {
+              try { candleSeries.update(lastBar); } catch(e) {}
+            }
+            if (volumeSeries && lastBar) {
+              try {
+                volumeSeries.update({
+                  time: lastBar.time,
+                  value: lastBar.volume,
+                  color: lastBar.close >= lastBar.open ? "rgba(16, 185, 129, 0.35)" : "rgba(244, 63, 94, 0.35)",
+                });
+              } catch(e) {}
             }
           }
 
@@ -1232,15 +1255,15 @@
       tbody.innerHTML = data.slice(0, 30).map(s => {
         const isUp = (s.change_pct || 0) >= 0;
         return `
-          <tr class="hover:bg-slate-800/40 font-mono text-xs cursor-pointer" onclick="switchSymbol('${s.symbol}')">
+                    <tr class="hover:bg-slate-800/40 font-mono text-xs cursor-pointer" onclick="switchSymbol('${s.symbol}')">
             <td class="py-2.5 px-3 font-bold text-slate-100 flex items-center gap-1.5">
               <span>${s.symbol}</span>
-              ${s.triggered ? '<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>' : ''}
+              ${(s.status === 'triggered' || s.triggered) ? '<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>' : ''}
             </td>
             <td class="py-2.5 px-3 font-bold text-slate-200">₹${(s.ltp || s.current_price || 0).toFixed(2)}</td>
-            <td class="py-2.5 px-3 font-bold ${isUp ? 'text-emerald-400' : 'text-rose-400'}">${isUp ? '+' : ''}${(s.change_pct || 0).toFixed(2)}%</td>
-            <td class="py-2.5 px-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold ${s.triggered ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-slate-800 text-slate-400'}">${s.status || 'Forming'}</span></td>
-            <td class="py-2.5 px-3 text-slate-400">${(s.range_high || 0).toFixed(1)} / ${(s.range_low || 0).toFixed(1)}</td>
+            <td class="py-2.5 px-3 font-bold ${isUp ? 'text-emerald-400' : 'text-rose-400'}">${isUp ? '+' : ''}${(s.change_pct !== undefined ? s.change_pct : (s.percent_change || 0)).toFixed(2)}%</td>
+            <td class="py-2.5 px-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold ${(s.status === 'triggered' || s.triggered) ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : (s.status === 'breakout_in_progress' ? 'bg-amber-950 text-amber-400 border border-amber-800' : 'bg-slate-800 text-slate-400')}">${(s.status || 'waiting').replace(/_/g, ' ')}</span></td>
+            <td class="py-2.5 px-3 text-slate-400">${(s.range_high || s.opening_range_high || (s.prev_close * 1.006) || 0).toFixed(1)} / ${(s.range_low || s.opening_range_low || (s.prev_close * 0.994) || 0).toFixed(1)}</td>
             <td class="py-2.5 px-3 text-rose-400">₹${(s.stop_loss || 0).toFixed(2)}</td>
             <td class="py-2.5 px-3 text-emerald-400">₹${(s.target_1 || 0).toFixed(2)}</td>
             <td class="py-2.5 px-3 text-slate-400">${s.expiry || 'CURRENT'}</td>
