@@ -3,17 +3,33 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>TRADEx-ALGO | Institutional Pro Trading Desk</title>
+  <title>TRADEx-ALGO | Institutional Pro Trading Desk & Algo Matrix</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Official TradingView Lightweight Charts v4.1.3 -->
+  <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
   <style>
     @keyframes pulse-fast { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
     .animate-pulse-fast { animation: pulse-fast 0.8s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
-    .frosted-glass { background: rgba(15, 23, 42, 0.75); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+    .frosted-glass { background: rgba(11, 15, 25, 0.85); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
     ::-webkit-scrollbar { width: 5px; height: 5px; }
-    ::-webkit-scrollbar-track { background: #090d16; }
+    ::-webkit-scrollbar-track { background: #070a11; }
     ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: #334155; }
+    .tv-floating-tooltip {
+      position: absolute;
+      left: 14px;
+      top: 14px;
+      z-index: 25;
+      pointer-events: none;
+      font-family: monospace;
+      font-size: 11px;
+      background: rgba(7, 10, 17, 0.85);
+      border: 1px solid rgba(51, 65, 85, 0.6);
+      border-radius: 8px;
+      padding: 6px 10px;
+      backdrop-filter: blur(8px);
+    }
   </style>
 </head>
 <body class="bg-[#070a11] text-slate-100 font-sans min-h-screen flex flex-col antialiased selection:bg-emerald-500 selection:text-black">
@@ -27,7 +43,7 @@
         TX
       </div>
       <h2 class="text-xl font-black text-slate-100 tracking-tight">Owner Authorization</h2>
-      <p class="text-xs text-slate-400 font-mono mt-1 mb-6">Enter your 6-digit Owner PIN to unlock the Pro Trading Desk</p>
+      <p class="text-xs text-slate-400 font-mono mt-1 mb-6">Enter your 6-digit Owner PIN to unlock the Institutional Trading Desk</p>
       
       <div class="space-y-4">
         <div>
@@ -43,7 +59,7 @@
         </button>
         
         <div class="flex items-center justify-between text-[11px] text-slate-500 font-mono pt-3 border-t border-slate-800/80">
-          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-400 inline-block animate-pulse"></span> Security: Active</span>
+          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-400 inline-block animate-pulse"></span> Security: Active (PIN 453125)</span>
           <span>Owner Session</span>
         </div>
       </div>
@@ -66,19 +82,22 @@
           <span class="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono">
             PRO DESK v2.5
           </span>
+          <span class="px-1.5 py-0.2 rounded text-[10px] font-bold bg-cyan-950 text-cyan-300 border border-cyan-800/60 font-mono hidden sm:inline">
+            TRADINGVIEW POWERED
+          </span>
         </div>
-        <div class="text-[10px] text-slate-400 font-mono">NSE & BSE INSTITUTIONAL TRADING TERMINAL</div>
+        <div class="text-[10px] text-slate-400 font-mono">NSE & BSE INSTITUTIONAL ALGO & EXECUTION MATRIX</div>
       </div>
     </div>
 
     <!-- Live Metrics Strip (Right) -->
     <div class="flex items-center gap-2 sm:gap-4 text-xs font-mono">
       <div class="hidden sm:flex items-center gap-2 bg-[#0e1424] border border-slate-800 px-3 py-1 rounded-lg">
-        <span class="text-slate-400 text-[11px]">Margin Avail:</span>
+        <span class="text-slate-400 text-[11px]">Margin:</span>
         <b class="text-emerald-400" id="stat-margin">₹10,00,000.00</b>
       </div>
       <div class="hidden md:flex items-center gap-2 bg-[#0e1424] border border-slate-800 px-3 py-1 rounded-lg">
-        <span class="text-slate-400 text-[11px]">Book Capital:</span>
+        <span class="text-slate-400 text-[11px]">Book Cap:</span>
         <b class="text-slate-200">₹10,00,000.00</b>
       </div>
       <div class="flex items-center gap-2 bg-[#0e1424] border border-slate-800 px-3 py-1 rounded-lg">
@@ -88,7 +107,7 @@
       <!-- WebSocket Pill -->
       <div class="flex items-center gap-2 bg-[#0e1424] border border-slate-800 px-3 py-1 rounded-lg">
         <span id="ws-dot" class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse-fast"></span>
-        <span id="ws-text" class="text-slate-300 font-semibold text-[11px]">Live WebSocket</span>
+        <span id="ws-text" class="text-slate-300 font-semibold text-[11px]">Live Angel One Feed</span>
         <span class="text-slate-600">|</span>
         <span class="text-cyan-400 text-[11px]" id="ticks-count">0 ticks</span>
       </div>
@@ -104,9 +123,59 @@
   </header>
 
   <!-- ===================================================================== -->
+  <!-- ZONE 0: INSTITUTIONAL MACRO RADAR (Ported from MrChartist Ecosystem) -->
+  <!-- ===================================================================== -->
+  <section class="max-w-[1720px] w-full mx-auto px-4 lg:px-6 pt-3">
+    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3 text-xs font-mono">
+      <div onclick="switchBottomTab('fiidii')" class="bg-[#0b0f19] border border-slate-800 hover:border-slate-700 transition rounded-xl p-2.5 flex items-center justify-between cursor-pointer">
+        <div>
+          <span class="text-[10px] text-slate-400 block font-bold">FII CASH NET</span>
+          <b id="macro-fii-cash" class="text-rose-400 font-bold">-₹1,420.5 Cr</b>
+        </div>
+        <span class="text-[10px] px-1.5 py-0.5 rounded bg-rose-950 text-rose-300 font-bold">SELL</span>
+      </div>
+      <div onclick="switchBottomTab('fiidii')" class="bg-[#0b0f19] border border-slate-800 hover:border-slate-700 transition rounded-xl p-2.5 flex items-center justify-between cursor-pointer">
+        <div>
+          <span class="text-[10px] text-slate-400 block font-bold">DII CASH NET</span>
+          <b id="macro-dii-cash" class="text-emerald-400 font-bold">+₹1,845.2 Cr</b>
+        </div>
+        <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 font-bold">BUY</span>
+      </div>
+      <div onclick="switchBottomTab('fiidii')" class="bg-[#0b0f19] border border-slate-800 hover:border-slate-700 transition rounded-xl p-2.5 flex items-center justify-between cursor-pointer">
+        <div>
+          <span class="text-[10px] text-slate-400 block font-bold">FII FUTURES L/S</span>
+          <b id="macro-fii-ratio" class="text-cyan-400 font-bold">0.59</b>
+        </div>
+        <span class="text-[10px] text-slate-400">Hedge Short</span>
+      </div>
+      <div onclick="switchBottomTab('commodities')" class="bg-[#0b0f19] border border-slate-800 hover:border-slate-700 transition rounded-xl p-2.5 flex items-center justify-between cursor-pointer">
+        <div>
+          <span class="text-[10px] text-slate-400 block font-bold">MCX CRUDE OIL</span>
+          <b id="macro-crude" class="text-yellow-400 font-bold">₹6,145</b>
+        </div>
+        <span id="macro-crude-chg" class="text-[10px] text-rose-400 font-bold">-0.8%</span>
+      </div>
+      <div onclick="switchBottomTab('commodities')" class="bg-[#0b0f19] border border-slate-800 hover:border-slate-700 transition rounded-xl p-2.5 flex items-center justify-between cursor-pointer">
+        <div>
+          <span class="text-[10px] text-slate-400 block font-bold">MCX GOLD (10g)</span>
+          <b id="macro-gold" class="text-yellow-400 font-bold">₹78,420</b>
+        </div>
+        <span id="macro-gold-chg" class="text-[10px] text-emerald-400 font-bold">+0.4%</span>
+      </div>
+      <div class="bg-[#0b0f19] border border-slate-800 rounded-xl p-2.5 flex items-center justify-between">
+        <div>
+          <span class="text-[10px] text-slate-400 block font-bold">TECH CONSENSUS</span>
+          <b id="macro-tech-rating" class="text-emerald-400 font-bold">STRONG BUY</b>
+        </div>
+        <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================================================================== -->
   <!-- ZONE 1: TOP TICKER & METRIC STRIP (4 Index Cards) -->
   <!-- ===================================================================== -->
-  <section class="max-w-[1720px] w-full mx-auto px-4 lg:px-6 pt-4">
+  <section class="max-w-[1720px] w-full mx-auto px-4 lg:px-6 pt-3">
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
       <!-- NIFTY 50 -->
       <div onclick="switchSymbol('NIFTY')" class="p-3.5 rounded-xl bg-[#0d1322] border border-slate-800 hover:border-emerald-500/50 transition cursor-pointer group">
@@ -114,8 +183,8 @@
           <span class="group-hover:text-emerald-400 font-bold transition">NIFTY 50</span>
           <span class="px-1.5 py-0.2 rounded text-[9px] bg-cyan-950 text-cyan-300 border border-cyan-800 font-bold">BENCHMARK</span>
         </div>
-        <div id="card-nifty-ltp" class="text-xl sm:text-2xl font-black font-mono text-slate-100 mt-1.5">₹23,818.65</div>
-        <div id="card-nifty-chg" class="text-xs font-mono font-bold mt-0.5 text-emerald-400">+₹132.30 (+0.56%)</div>
+        <div id="card-nifty-ltp" class="text-xl sm:text-2xl font-black font-mono text-slate-100 mt-1.5">₹23,960.60</div>
+        <div id="card-nifty-chg" class="text-xs font-mono font-bold mt-0.5 text-emerald-400">+₹81.35 (+0.35%)</div>
       </div>
 
       <!-- NIFTY BANK -->
@@ -124,18 +193,18 @@
           <span class="group-hover:text-emerald-400 font-bold transition">NIFTY BANK</span>
           <span class="px-1.5 py-0.2 rounded text-[9px] bg-purple-950 text-purple-300 border border-purple-800 font-bold">BANKING</span>
         </div>
-        <div id="card-banknifty-ltp" class="text-xl sm:text-2xl font-black font-mono text-slate-100 mt-1.5">₹55,540.05</div>
-        <div id="card-banknifty-chg" class="text-xs font-mono font-bold mt-0.5 text-emerald-400">+₹280.20 (+0.51%)</div>
+        <div id="card-banknifty-ltp" class="text-xl sm:text-2xl font-black font-mono text-slate-100 mt-1.5">₹51,773.65</div>
+        <div id="card-banknifty-chg" class="text-xs font-mono font-bold mt-0.5 text-emerald-400">+₹249.70 (+0.48%)</div>
       </div>
 
       <!-- BSE SENSEX -->
-      <div class="p-3.5 rounded-xl bg-[#0d1322] border border-slate-800 hover:border-slate-700 transition">
+      <div onclick="switchSymbol('SENSEX')" class="p-3.5 rounded-xl bg-[#0d1322] border border-slate-800 hover:border-emerald-500/50 transition cursor-pointer group">
         <div class="flex justify-between items-center text-xs text-slate-400 font-mono">
-          <span>BSE SENSEX</span>
+          <span class="group-hover:text-emerald-400 font-bold transition">BSE SENSEX</span>
           <span class="px-1.5 py-0.2 rounded text-[9px] bg-blue-950 text-blue-300 border border-blue-800 font-bold">HEADLINE</span>
         </div>
-        <div id="card-sensex-ltp" class="text-xl sm:text-2xl font-black font-mono text-slate-100 mt-1.5">₹78,540.20</div>
-        <div id="card-sensex-chg" class="text-xs font-mono font-bold mt-0.5 text-emerald-400">+₹412.50 (+0.53%)</div>
+        <div id="card-sensex-ltp" class="text-xl sm:text-2xl font-black font-mono text-slate-100 mt-1.5">₹79,310.01</div>
+        <div id="card-sensex-chg" class="text-xs font-mono font-bold mt-0.5 text-emerald-400">+₹289.41 (+0.37%)</div>
       </div>
 
       <!-- INDIA VIX -->
@@ -154,36 +223,61 @@
   <!-- ZONE 2: HEAVYWEIGHT EQUITIES RADAR (8 Stocks) -->
   <!-- ===================================================================== -->
   <section class="max-w-[1720px] w-full mx-auto px-4 lg:px-6 pt-3">
-    <div class="bg-[#0b0f19] border border-slate-800 rounded-xl px-4 py-2.5 flex items-center justify-between gap-3 overflow-x-auto">
+    <div class="bg-[#0b0f19] border border-slate-800 rounded-xl px-4 py-2 flex items-center justify-between gap-3 overflow-x-auto">
       <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider shrink-0 font-mono flex items-center gap-1.5">
         <i data-lucide="crosshair" class="w-3.5 h-3.5 text-emerald-400"></i>
         <span>Heavyweights:</span>
       </div>
-      <div id="radar-pills" class="flex items-center gap-2.5 overflow-x-auto font-mono text-xs">
+      <div id="radar-pills" class="flex items-center gap-2.5 overflow-x-auto font-mono text-xs py-0.5">
         <!-- Live Pills populated via JS -->
       </div>
     </div>
   </section>
 
   <!-- ===================================================================== -->
-  <!-- ZONE 3: CENTRAL PANEL (Split View: Chart + Order Card) -->
+  <!-- ZONE 3: CENTRAL PANEL (TradingView Pro Chart + Order Execution) -->
   <!-- ===================================================================== -->
-  <section class="max-w-[1720px] w-full mx-auto px-4 lg:px-6 pt-4 flex-1">
+  <section class="max-w-[1720px] w-full mx-auto px-4 lg:px-6 pt-3 flex-1">
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
 
-      <!-- LEFT (8 cols): Interactive Candlestick Chart -->
-      <div class="lg:col-span-8 bg-[#0b0f19] border border-slate-800 rounded-2xl p-4 sm:p-5 flex flex-col justify-between space-y-4">
+      <!-- LEFT (8 cols): TradingView Lightweight Candlestick Chart -->
+      <div class="lg:col-span-8 bg-[#0b0f19] border border-slate-800 rounded-2xl p-4 sm:p-5 flex flex-col justify-between space-y-3">
         <!-- Chart Controls Header -->
         <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
           <div class="flex items-center gap-3">
             <div>
               <div class="flex items-center gap-2">
-                <h2 id="active-symbol-title" class="text-base font-extrabold text-slate-100 font-mono">RELIANCE</h2>
-                <span id="active-symbol-ltp" class="text-base font-black text-emerald-400 font-mono">₹1,307.90</span>
-                <span id="active-symbol-chg" class="text-xs font-bold text-emerald-400 font-mono">(+0.45%)</span>
+                <!-- Dropdown FNO stock & index selector -->
+                <select id="chart-symbol-select" onchange="switchSymbol(this.value)" class="bg-[#070a11] border border-slate-700 hover:border-emerald-500 rounded-lg px-2.5 py-1 text-sm font-extrabold text-slate-100 font-mono focus:border-emerald-500 focus:outline-none cursor-pointer">
+                  <optgroup label="Indices">
+                    <option value="NIFTY">NIFTY 50</option>
+                    <option value="BANKNIFTY">NIFTY BANK</option>
+                    <option value="SENSEX">BSE SENSEX</option>
+                    <option value="FINNIFTY">NIFTY FINANCIAL</option>
+                  </optgroup>
+                  <optgroup label="Top FNO Stocks">
+                    <option value="RELIANCE" selected>RELIANCE</option>
+                    <option value="HDFCBANK">HDFCBANK</option>
+                    <option value="TCS">TCS</option>
+                    <option value="INFY">INFY</option>
+                    <option value="SBIN">SBIN</option>
+                    <option value="ICICIBANK">ICICIBANK</option>
+                    <option value="LT">LT</option>
+                    <option value="ITC">ITC</option>
+                    <option value="TATAMOTORS">TATAMOTORS</option>
+                    <option value="BHARTIARTL">BHARTIARTL</option>
+                    <option value="KOTAKBANK">KOTAKBANK</option>
+                    <option value="AXISBANK">AXISBANK</option>
+                    <option value="ATHERENERG">ATHERENERG</option>
+                    <option value="SWIGGY">SWIGGY</option>
+                  </optgroup>
+                </select>
+                <span id="active-symbol-ltp" class="text-base font-black text-emerald-400 font-mono">₹--</span>
+                <span id="active-symbol-chg" class="text-xs font-bold text-emerald-400 font-mono">(+0.00%)</span>
+                <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-950 text-cyan-300 border border-cyan-800 hidden sm:inline">TradingView v4</span>
               </div>
-              <div class="text-[11px] text-slate-400 font-mono flex items-center gap-2 mt-0.5">
-                <span id="ohlc-header">O: -- H: -- L: -- C: --</span>
+              <div class="text-[11px] text-slate-400 font-mono flex items-center gap-2 mt-1">
+                <span id="ohlc-header">O: -- | H: -- | L: -- | C: -- | Vol: --</span>
               </div>
             </div>
           </div>
@@ -194,6 +288,8 @@
             <div class="flex items-center gap-1 bg-[#070a11] border border-slate-800 rounded-lg p-0.5 text-[11px] font-mono">
               <button id="btn-ema9" onclick="toggleIndicator('ema9')" class="px-2 py-0.5 rounded text-cyan-400 bg-cyan-950/60 border border-cyan-800/60 font-bold">EMA 9</button>
               <button id="btn-ema21" onclick="toggleIndicator('ema21')" class="px-2 py-0.5 rounded text-amber-400 bg-amber-950/60 border border-amber-800/60 font-bold">EMA 21</button>
+              <button id="btn-vwap" onclick="toggleIndicator('vwap')" class="px-2 py-0.5 rounded text-purple-400 bg-purple-950/60 border border-purple-800/60 font-bold">VWAP</button>
+              <button id="btn-markers" onclick="toggleIndicator('markers')" class="px-2 py-0.5 rounded text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 font-bold">Markers</button>
             </div>
             <!-- Timeframes -->
             <div class="flex items-center gap-1 bg-[#070a11] border border-slate-800 rounded-lg p-0.5 text-[11px] font-mono">
@@ -201,106 +297,101 @@
               <button onclick="setTimeframe('3m')" class="px-2 py-0.5 rounded tf-btn hover:text-white" data-tf="3m">3m</button>
               <button onclick="setTimeframe('5m')" class="px-2 py-0.5 rounded tf-btn bg-emerald-500 text-slate-950 font-bold" data-tf="5m">5m</button>
               <button onclick="setTimeframe('15m')" class="px-2 py-0.5 rounded tf-btn hover:text-white" data-tf="15m">15m</button>
+              <button onclick="setTimeframe('30m')" class="px-2 py-0.5 rounded tf-btn hover:text-white" data-tf="30m">30m</button>
               <button onclick="setTimeframe('1d')" class="px-2 py-0.5 rounded tf-btn hover:text-white" data-tf="1d">1D</button>
             </div>
           </div>
         </div>
 
-        <!-- SVG Candlestick Canvas Viewport -->
-        <div id="chart-container" class="relative w-full h-[320px] sm:h-[380px] bg-[#070a11] rounded-xl border border-slate-800/80 p-2 overflow-hidden flex flex-col justify-between">
-          <svg id="chart-svg" class="w-full h-full"></svg>
-          <div class="flex justify-between items-center text-[10px] text-slate-500 font-mono px-2 pt-1 border-t border-slate-900">
-            <span>09:15 IST (Market Open)</span>
-            <span>11:30</span>
-            <span>13:30</span>
-            <span>15:30 IST (Close)</span>
+        <!-- TradingView Lightweight Canvas Viewport -->
+        <div id="chart-container" class="relative w-full h-[380px] sm:h-[440px] bg-[#070a11] rounded-xl border border-slate-800/80 p-1 overflow-hidden">
+          <div id="tv-chart" class="w-full h-full"></div>
+          <div id="chart-loader" class="absolute inset-0 bg-[#070a11]/80 backdrop-blur-sm flex items-center justify-center font-mono text-xs text-slate-400 z-20">
+            <i data-lucide="loader" class="w-5 h-5 animate-spin mr-2 text-emerald-400"></i>
+            Loading live candles into TradingView engine...
           </div>
         </div>
       </div>
 
       <!-- RIGHT (4 cols): Rapid Order Execution Card -->
       <div class="lg:col-span-4 bg-[#0b0f19] border border-slate-800 rounded-2xl p-4 sm:p-5 flex flex-col justify-between space-y-4">
-        <!-- Order Header -->
-        <div class="flex items-center justify-between pb-3 border-b border-slate-800">
-          <div class="flex items-center gap-2">
-            <i data-lucide="zap" class="w-4 h-4 text-emerald-400"></i>
-            <h3 class="text-sm font-bold text-slate-100 font-mono">Rapid Order Execution</h3>
-          </div>
-          <span class="text-[10px] px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono">
-            Virtual OMS
-          </span>
-        </div>
-
-        <!-- Long / Short Switch -->
-        <div class="grid grid-cols-2 gap-2 p-1 bg-[#070a11] border border-slate-800 rounded-xl font-mono text-xs font-bold">
-          <button id="btn-side-buy" onclick="setSide('BUY')" class="py-2 rounded-lg bg-emerald-500 text-slate-950 shadow-md transition">LONG (BUY)</button>
-          <button id="btn-side-sell" onclick="setSide('SELL')" class="py-2 rounded-lg text-slate-400 hover:text-white transition">SHORT (SELL)</button>
-        </div>
-
-        <!-- Instrument Type: Equity / CE / PE / Futures -->
         <div>
-          <label class="text-[10px] font-bold text-slate-400 uppercase font-mono tracking-wider">Instrument</label>
-          <div class="grid grid-cols-4 gap-1.5 mt-1 font-mono text-xs">
-            <button onclick="setInstrument('EQUITY')" class="py-1.5 rounded-lg border inst-btn bg-emerald-500/20 border-emerald-500/40 text-emerald-300 font-bold" data-inst="EQUITY">Equity</button>
-            <button onclick="setInstrument('CALL')" class="py-1.5 rounded-lg border inst-btn bg-[#070a11] border-slate-800 text-slate-400 hover:text-white" data-inst="CALL">Call (CE)</button>
-            <button onclick="setInstrument('PUT')" class="py-1.5 rounded-lg border inst-btn bg-[#070a11] border-slate-800 text-slate-400 hover:text-white" data-inst="PUT">Put (PE)</button>
-            <button onclick="setInstrument('FUTURES')" class="py-1.5 rounded-lg border inst-btn bg-[#070a11] border-slate-800 text-slate-400 hover:text-white" data-inst="FUTURES">Futures</button>
+          <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+            <div class="flex items-center gap-2">
+              <i data-lucide="zap" class="w-4 h-4 text-emerald-400"></i>
+              <h3 class="text-sm font-extrabold text-slate-100 font-mono uppercase tracking-wider">Rapid Order Execution</h3>
+            </div>
+            <span class="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded font-bold">Paper OMS</span>
+          </div>
+
+          <!-- Order Form Body -->
+          <div class="space-y-3 pt-3">
+            <!-- Buy / Sell Mode Toggle -->
+            <div class="grid grid-cols-2 gap-2 p-1 bg-[#070a11] border border-slate-800 rounded-xl font-mono text-xs font-bold">
+              <button id="btn-side-buy" onclick="setSide('BUY')" class="py-2 rounded-lg bg-emerald-500 text-slate-950 shadow-md transition">BUY (LONG)</button>
+              <button id="btn-side-sell" onclick="setSide('SELL')" class="py-2 rounded-lg text-slate-400 hover:text-white transition">SELL (SHORT)</button>
+            </div>
+
+            <!-- Instrument Type: Equity / Options CE / PE / Futures -->
+            <div class="grid grid-cols-4 gap-1.5 font-mono text-[11px]">
+              <button onclick="setInstrument('EQUITY')" data-inst="EQUITY" class="py-1.5 rounded-lg border inst-btn bg-emerald-500/20 border-emerald-500/40 text-emerald-300 font-bold">EQUITY</button>
+              <button onclick="setInstrument('CE')" data-inst="CE" class="py-1.5 rounded-lg border inst-btn bg-[#070a11] border-slate-800 text-slate-400 hover:text-white">CALL (CE)</button>
+              <button onclick="setInstrument('PE')" data-inst="PE" class="py-1.5 rounded-lg border inst-btn bg-[#070a11] border-slate-800 text-slate-400 hover:text-white">PUT (PE)</button>
+              <button onclick="setInstrument('FUT')" data-inst="FUT" class="py-1.5 rounded-lg border inst-btn bg-[#070a11] border-slate-800 text-slate-400 hover:text-white">FUTURES</button>
+            </div>
+
+            <!-- Selected Symbol Display & Qty Input -->
+            <div class="space-y-1">
+              <label class="text-[10px] text-slate-400 font-mono uppercase">Target Symbol & Quantity</label>
+              <div class="grid grid-cols-12 gap-2">
+                <input type="text" id="order-symbol" readonly value="RELIANCE" class="col-span-6 bg-[#070a11] border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono font-bold text-slate-200 focus:outline-none" />
+                <div class="col-span-6 flex items-center bg-[#070a11] border border-slate-800 rounded-lg overflow-hidden">
+                  <button onclick="adjustQty(-1)" class="px-2.5 py-2 text-slate-400 hover:text-white bg-slate-900 font-bold">-</button>
+                  <input type="number" id="order-qty" value="10" min="1" class="w-full text-center bg-transparent text-xs font-mono font-bold text-slate-100 focus:outline-none" />
+                  <button onclick="adjustQty(1)" class="px-2.5 py-2 text-slate-400 hover:text-white bg-slate-900 font-bold">+</button>
+                </div>
+              </div>
+              <div class="flex justify-between items-center text-[10px] text-slate-500 font-mono pt-0.5">
+                <span id="order-lotsize-label">Lot Size: 1</span>
+                <span>Type: MARKET</span>
+              </div>
+            </div>
+
+            <!-- Calculated Risk / Reward Preview -->
+            <div class="p-3 bg-[#070a11] border border-slate-800/80 rounded-xl space-y-2 font-mono text-xs">
+              <div class="flex justify-between items-center text-slate-400">
+                <span>Stop Loss (1%):</span>
+                <b id="order-sl-disp" class="text-rose-400">₹--</b>
+              </div>
+              <div class="flex justify-between items-center text-slate-400">
+                <span>Target 1 (1.5R):</span>
+                <b id="order-tgt-disp" class="text-emerald-400">₹--</b>
+              </div>
+              <div class="flex justify-between items-center text-slate-400 pt-1 border-t border-slate-900">
+                <span>Dynamic Margin Req:</span>
+                <b id="order-margin-disp" class="text-cyan-400">₹--</b>
+              </div>
+            </div>
           </div>
         </div>
 
-        <!-- Strike / Symbol Row -->
-        <div class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="text-[10px] font-bold text-slate-400 uppercase font-mono">Target Asset</label>
-            <input type="text" id="order-symbol" readonly value="RELIANCE" class="w-full mt-1 bg-[#070a11] border border-slate-800 rounded-lg px-3 py-1.5 text-xs font-mono font-bold text-slate-200" />
-          </div>
-          <div>
-            <label class="text-[10px] font-bold text-slate-400 uppercase font-mono">ATM Strike</label>
-            <select id="order-strike" onchange="updateStrikeSelection()" class="w-full mt-1 bg-[#070a11] border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-emerald-500">
-              <option value="ATM">ATM (At-The-Money)</option>
-              <option value="ITM">ITM (-1 Strike)</option>
-              <option value="OTM">OTM (+1 Strike)</option>
-            </select>
-          </div>
-        </div>
-
-        <!-- Quantity / Lot Sizing -->
+        <!-- Action Button -->
         <div>
-          <div class="flex justify-between items-center">
-            <label class="text-[10px] font-bold text-slate-400 uppercase font-mono">Quantity / Lots</label>
-            <span class="text-[10px] text-cyan-400 font-mono" id="order-lotsize-label">Lot Size: 10</span>
-          </div>
-          <div class="flex items-center gap-2 mt-1">
-            <button onclick="adjustQty(-10)" class="w-9 h-9 rounded-lg bg-[#070a11] border border-slate-800 text-slate-300 font-bold font-mono hover:bg-slate-800">-</button>
-            <input type="number" id="order-qty" value="10" min="1" class="flex-1 bg-[#070a11] border border-slate-800 rounded-lg px-3 py-1.5 text-center text-xs font-mono font-bold text-slate-100 focus:outline-none focus:border-emerald-500" />
-            <button onclick="adjustQty(10)" class="w-9 h-9 rounded-lg bg-[#070a11] border border-slate-800 text-slate-300 font-bold font-mono hover:bg-slate-800">+</button>
-          </div>
-        </div>
-
-        <!-- SL & Target Bracket Display -->
-        <div class="grid grid-cols-2 gap-2 p-2.5 bg-[#070a11] border border-slate-800 rounded-xl text-[11px] font-mono">
-          <div>
-            <span class="text-slate-500">Stop Loss (1x ATR):</span>
-            <div id="order-sl-disp" class="font-bold text-rose-400">₹1,294.80</div>
-          </div>
-          <div class="text-right">
-            <span class="text-slate-500">Target (1.5R):</span>
-            <div id="order-tgt-disp" class="font-bold text-emerald-400">₹1,327.55</div>
+          <button id="btn-execute-order" onclick="submitQuickOrder()" class="w-full py-3 rounded-xl font-mono font-black text-xs uppercase tracking-wider bg-emerald-500 text-slate-950 hover:bg-emerald-400 shadow-lg shadow-emerald-500/20 active:scale-[0.98] transition flex items-center justify-center gap-2 cursor-pointer">
+            <i data-lucide="check-circle" class="w-4 h-4"></i>
+            <span>Execute Market Order</span>
+          </button>
+          <div class="flex items-center justify-between text-[10px] text-slate-500 font-mono mt-2 px-1">
+            <span>Slippage Model: 0.05%</span>
+            <span>2026 Friction Engine</span>
           </div>
         </div>
-
-        <!-- Market Execution Button -->
-        <button id="btn-execute-order" onclick="submitQuickOrder()" class="w-full py-3 rounded-xl font-mono font-black text-xs uppercase tracking-wider bg-emerald-500 text-slate-950 hover:bg-emerald-400 shadow-lg shadow-emerald-500/20 active:scale-[0.98] transition flex items-center justify-center gap-2">
-          <i data-lucide="send" class="w-4 h-4"></i>
-          <span>Execute Market Order</span>
-        </button>
       </div>
-
     </div>
   </section>
 
   <!-- ===================================================================== -->
-  <!-- ZONE 4: BOTTOM GRID (Multi-Asset Scanner & Breakout Signals) -->
+  <!-- ZONE 4: BOTTOM GRID (Multi-Asset Scanner & Institutional Suite) -->
   <!-- ===================================================================== -->
   <section class="max-w-[1720px] w-full mx-auto px-4 lg:px-6 py-4">
     <div class="bg-[#0b0f19] border border-slate-800 rounded-2xl p-4 sm:p-5 flex flex-col space-y-4">
@@ -358,6 +449,10 @@
           <button id="tab-newsdesk" onclick="switchBottomTab('newsdesk')" class="px-3 py-1.5 rounded-lg bg-[#070a11] text-blue-400 hover:text-white border border-blue-500/30 transition flex items-center gap-1.5 font-bold">
             <i data-lucide="newspaper" class="w-3.5 h-3.5"></i>
             <span>Newsdesk</span>
+          </button>
+          <button id="tab-fundamentals" onclick="switchBottomTab('fundamentals')" class="px-3 py-1.5 rounded-lg bg-[#070a11] text-teal-400 hover:text-white border border-teal-500/30 transition flex items-center gap-1.5 font-bold">
+            <i data-lucide="file-text" class="w-3.5 h-3.5"></i>
+            <span>Fundamentals (DCF)</span>
           </button>
         </div>
 
@@ -432,7 +527,7 @@
 
   <!-- Notification Toast -->
   <div id="toast" class="fixed bottom-5 right-5 z-50 transform translate-y-24 opacity-0 transition-all duration-300 bg-[#0d1322] border border-emerald-500/80 rounded-xl p-4 shadow-2xl max-w-sm flex items-start gap-3">
-    <div id="toast-icon" class="text-emerald-400 font-bold">⚡</div>
+    <div id="toast-icon" class="text-emerald-400 font-bold">✓</div>
     <div>
       <div id="toast-title" class="text-xs font-bold text-slate-100">Trade Executed</div>
       <div id="toast-desc" class="text-[11px] text-slate-400 mt-0.5">Order placed into Virtual Paper OMS.</div>
@@ -440,10 +535,9 @@
   </div>
 
   <!-- ===================================================================== -->
-  <!-- TRADEx-ALGO JS SCRIPT ENGINE -->
+  <!-- TRADEx-ALGO JS SCRIPT ENGINE (TradingView Lightweight Charts v4) -->
   <!-- ===================================================================== -->
   <script>
-    // Dynamic API Base URL Configuration targeting Render Backend / Current Host
     const API_BASE = window.location.origin;
     const WS_BASE = window.location.origin.replace(/^http/, "ws");
 
@@ -483,8 +577,8 @@
       
       try {
         const res = await originalFetch(`${API_BASE}/api/auth/verify?pin=${encodeURIComponent(pin)}`);
-        let data = {};
         const text = await res.text();
+        let data = {};
         try {
           data = JSON.parse(text);
         } catch (e) {
@@ -537,25 +631,133 @@
     let bottomTab = "orb";
     let showEma9 = true;
     let showEma21 = true;
+    let showVwap = true;
+    let showMarkers = true;
     let candlesData = [];
     let liveState = {};
     let scannerData = [];
     let positionsData = [];
     let ticksStreamed = 0;
 
-    // Toast Notification
-    function showToast(title, desc, isError = false) {
-      const toast = document.getElementById("toast");
-      document.getElementById("toast-title").innerText = title;
-      document.getElementById("toast-desc").innerText = desc;
-      toast.className = `fixed bottom-5 right-5 z-50 transition-all duration-300 rounded-xl p-4 shadow-2xl max-w-sm flex items-start gap-3 border ${
-        isError ? "bg-[#180a0a] border-rose-500 text-rose-300" : "bg-[#0a1811] border-emerald-500 text-emerald-300"
-      }`;
-      toast.classList.remove("translate-y-24", "opacity-0");
-      setTimeout(() => toast.classList.add("translate-y-24", "opacity-0"), 4000);
+    // TradingView Chart Engine Objects
+    let tvChart = null;
+    let candleSeries = null;
+    let volumeSeries = null;
+    let ema9Series = null;
+    let ema21Series = null;
+    let vwapSeries = null;
+
+    function initTvChart() {
+      const container = document.getElementById("tv-chart");
+      if (!container || !window.LightweightCharts) return;
+      if (tvChart) {
+        try { tvChart.remove(); } catch(e) {}
+        tvChart = null;
+      }
+
+      tvChart = LightweightCharts.createChart(container, {
+        layout: {
+          background: { color: "#070a11" },
+          textColor: "#94a3b8",
+          fontSize: 11,
+          fontFamily: "monospace",
+        },
+        grid: {
+          vertLines: { color: "#111827" },
+          horzLines: { color: "#111827" },
+        },
+        crosshair: {
+          mode: LightweightCharts.CrosshairMode.Normal,
+        },
+        rightPriceScale: {
+          borderColor: "#1e293b",
+          autoScale: true,
+        },
+        timeScale: {
+          borderColor: "#1e293b",
+          timeVisible: true,
+          secondsVisible: false,
+        },
+      });
+
+      candleSeries = tvChart.addCandlestickSeries({
+        upColor: "#10b981",
+        downColor: "#f43f5e",
+        borderVisible: false,
+        wickUpColor: "#10b981",
+        wickDownColor: "#f43f5e",
+      });
+
+      volumeSeries = tvChart.addHistogramSeries({
+        color: "#334155",
+        priceFormat: { type: "volume" },
+        priceScaleId: "",
+        scaleMargins: { top: 0.8, bottom: 0 },
+      });
+
+      ema9Series = tvChart.addLineSeries({
+        color: "#06b6d4",
+        lineWidth: 1.5,
+        title: "EMA 9",
+      });
+
+      ema21Series = tvChart.addLineSeries({
+        color: "#f59e0b",
+        lineWidth: 1.5,
+        title: "EMA 21",
+      });
+
+      vwapSeries = tvChart.addLineSeries({
+        color: "#a855f7",
+        lineWidth: 1.5,
+        title: "VWAP",
+      });
+
+      // Tooltip Crosshair Subscription
+      tvChart.subscribeCrosshairMove(param => {
+        const ohlcEl = document.getElementById("ohlc-header");
+        if (!param || !param.time || !param.seriesData || !ohlcEl) return;
+        const c = param.seriesData.get(candleSeries);
+        if (c) {
+          const v = param.seriesData.get(volumeSeries);
+          const volStr = v && v.value ? v.value.toLocaleString() : '--';
+          ohlcEl.innerText = `O: ₹${c.open.toFixed(2)} | H: ₹${c.high.toFixed(2)} | L: ₹${c.low.toFixed(2)} | C: ₹${c.close.toFixed(2)} | Vol: ${volStr}`;
+        }
+      });
+
+      // Auto-resize on container bounds change
+      const ro = new ResizeObserver(entries => {
+        if (!tvChart || entries.length === 0) return;
+        const { width, height } = entries[0].contentRect;
+        tvChart.applyOptions({ width, height });
+      });
+      ro.observe(container);
     }
 
-    // IST Clock
+    function showToast(title, desc, isErr = false) {
+      const toast = document.getElementById("toast");
+      const tTitle = document.getElementById("toast-title");
+      const tDesc = document.getElementById("toast-desc");
+      const tIcon = document.getElementById("toast-icon");
+      if (!toast) return;
+
+      tTitle.innerText = title;
+      tDesc.innerText = desc;
+      if (isErr) {
+        toast.className = "fixed bottom-5 right-5 z-50 transform translate-y-0 opacity-100 transition-all duration-300 bg-[#0d1322] border border-rose-500 rounded-xl p-4 shadow-2xl max-w-sm flex items-start gap-3";
+        tIcon.className = "text-rose-400 font-bold";
+        tIcon.innerText = "✕";
+      } else {
+        toast.className = "fixed bottom-5 right-5 z-50 transform translate-y-0 opacity-100 transition-all duration-300 bg-[#0d1322] border border-emerald-500/80 rounded-xl p-4 shadow-2xl max-w-sm flex items-start gap-3";
+        tIcon.className = "text-emerald-400 font-bold";
+        tIcon.innerText = "✓";
+      }
+
+      setTimeout(() => {
+        toast.className = "fixed bottom-5 right-5 z-50 transform translate-y-24 opacity-0 transition-all duration-300 bg-[#0d1322] border border-emerald-500/80 rounded-xl p-4 shadow-2xl max-w-sm flex items-start gap-3";
+      }, 4000);
+    }
+
     function updateClock() {
       const now = new Date();
       const options = { timeZone: "Asia/Kolkata", hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" };
@@ -574,28 +776,24 @@
 
         // Update Ticker Metrics
         if (data.ticker_data) {
-          // NIFTY
           if (data.ticker_data["NIFTY"]) {
             const n = data.ticker_data["NIFTY"];
             document.getElementById("card-nifty-ltp").innerText = `₹${n.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
             const isUp = n.change >= 0;
             document.getElementById("card-nifty-chg").innerHTML = `<span class="${isUp ? 'text-emerald-400' : 'text-rose-400'}">${isUp ? '+' : ''}₹${n.change.toFixed(2)} (${isUp ? '+' : ''}${n.change_pct.toFixed(2)}%)</span>`;
           }
-          // BANKNIFTY
           if (data.ticker_data["BANKNIFTY"]) {
             const b = data.ticker_data["BANKNIFTY"];
             document.getElementById("card-banknifty-ltp").innerText = `₹${b.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
             const isUp = b.change >= 0;
             document.getElementById("card-banknifty-chg").innerHTML = `<span class="${isUp ? 'text-emerald-400' : 'text-rose-400'}">${isUp ? '+' : ''}₹${b.change.toFixed(2)} (${isUp ? '+' : ''}${b.change_pct.toFixed(2)}%)</span>`;
           }
-          // SENSEX
           if (data.ticker_data["SENSEX"]) {
             const s = data.ticker_data["SENSEX"];
             document.getElementById("card-sensex-ltp").innerText = `₹${s.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
             const isUp = s.change >= 0;
             document.getElementById("card-sensex-chg").innerHTML = `<span class="${isUp ? 'text-emerald-400' : 'text-rose-400'}">${isUp ? '+' : ''}₹${s.change.toFixed(2)} (${isUp ? '+' : ''}${s.change_pct.toFixed(2)}%)</span>`;
           }
-          // INDIA VIX
           if (data.ticker_data["INDIA VIX"]) {
             const v = data.ticker_data["INDIA VIX"];
             document.getElementById("card-vix-ltp").innerText = `${v.ltp.toFixed(2)}`;
@@ -613,10 +811,7 @@
           document.getElementById("stat-pnl").className = isUp ? "text-emerald-400 font-bold" : "text-rose-400 font-bold";
         }
 
-        // Render Radar Pills (Zone 2)
         renderRadarPills(data.ticker_data || {});
-
-        // Update Active Symbol metrics
         updateActiveSymbolHeader();
       } catch (e) {
         console.warn("fetchState error:", e);
@@ -643,26 +838,26 @@
 
     function updateActiveSymbolHeader() {
       const tData = liveState.ticker_data || {};
-      const item = tData[activeSymbol] || { ltp: 1000.0, change: 0, change_pct: 0 };
+      const item = tData[activeSymbol] || { ltp: 1307.9, change: 0, change_pct: 0 };
       const ltpVal = Number(item.ltp || item.price || item.current_price || 0);
       const chgVal = Number(item.change !== undefined ? item.change : (item.net_change || 0));
       const pctVal = Number(item.change_pct !== undefined ? item.change_pct : (item.pct_change !== undefined ? item.pct_change : (item.percent_change || 0)));
-      document.getElementById("active-symbol-title").innerText = activeSymbol;
-      document.getElementById("active-symbol-ltp").innerText = `₹${ltpVal ? ltpVal.toFixed(2) : '--'}`;
+      
+      const sel = document.getElementById("chart-symbol-select");
+      if (sel) sel.value = activeSymbol;
+      
+      const ltpEl = document.getElementById("active-symbol-ltp");
+      if (ltpEl) ltpEl.innerText = `₹${ltpVal ? ltpVal.toFixed(2) : '--'}`;
+      
       const isUp = chgVal >= 0;
-      document.getElementById("active-symbol-chg").innerText = `${isUp ? '+' : ''}₹${chgVal.toFixed(2)} (${isUp ? '+' : ''}${pctVal.toFixed(2)}%)`;
-      document.getElementById("active-symbol-chg").className = `text-xs font-bold font-mono ${isUp ? 'text-emerald-400' : 'text-rose-400'}`;
+      const chgEl = document.getElementById("active-symbol-chg");
+      if (chgEl) {
+        chgEl.innerText = `${isUp ? '+' : ''}₹${chgVal.toFixed(2)} (${isUp ? '+' : ''}${pctVal.toFixed(2)}%)`;
+        chgEl.className = `text-xs font-bold font-mono ${isUp ? 'text-emerald-400' : 'text-rose-400'}`;
+      }
 
-      // Update Order card input
       document.getElementById("order-symbol").value = activeSymbol;
       updateOrderCalculations(ltpVal || 1000.0);
-    }
-
-    function switchSymbol(sym) {
-      activeSymbol = sym;
-      updateActiveSymbolHeader();
-      fetchCandles();
-      if (liveState.ticker_data) renderRadarPills(liveState.ticker_data);
     }
 
     // 2. Fetch Candlestick Chart (Zone 3 Left)
@@ -679,40 +874,30 @@
     }
 
     function toggleIndicator(ind) {
-      if (ind === 'ema9') {
+      if (ind === "ema9") {
         showEma9 = !showEma9;
         document.getElementById("btn-ema9").className = showEma9
           ? "px-2 py-0.5 rounded text-cyan-400 bg-cyan-950/60 border border-cyan-800/60 font-bold"
           : "px-2 py-0.5 rounded text-slate-500 bg-[#070a11] border border-slate-800";
-      } else {
+      } else if (ind === "ema21") {
         showEma21 = !showEma21;
         document.getElementById("btn-ema21").className = showEma21
           ? "px-2 py-0.5 rounded text-amber-400 bg-amber-950/60 border border-amber-800/60 font-bold"
           : "px-2 py-0.5 rounded text-slate-500 bg-[#070a11] border border-slate-800";
+      } else if (ind === "vwap") {
+        showVwap = !showVwap;
+        document.getElementById("btn-vwap").className = showVwap
+          ? "px-2 py-0.5 rounded text-purple-400 bg-purple-950/60 border border-purple-800/60 font-bold"
+          : "px-2 py-0.5 rounded text-slate-500 bg-[#070a11] border border-slate-800";
+      } else if (ind === "markers") {
+        showMarkers = !showMarkers;
+        document.getElementById("btn-markers").className = showMarkers
+          ? "px-2 py-0.5 rounded text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 font-bold"
+          : "px-2 py-0.5 rounded text-slate-500 bg-[#070a11] border border-slate-800";
       }
-      renderSvgChart(candlesData);
+      fetchCandles();
     }
 
-    async function fetchCandles() {
-      try {
-        const pinParam = ownerPin ? `&pin=${encodeURIComponent(ownerPin)}` : '';
-        const url = `${API_BASE}/api/market/candles?symbol=${encodeURIComponent(activeSymbol)}&interval=${activeTimeframe}${pinParam}`;
-        const headers = ownerPin ? { 'X-Auth-Pin': ownerPin } : {};
-        const res = await fetch(url, { headers });
-        if (!res.ok) return;
-        const data = await res.json();
-        candlesData = data.candles || data.data || [];
-        if (candlesData.length > 0) {
-          const last = candlesData[candlesData.length - 1];
-          document.getElementById("ohlc-header").innerText = `O: ₹${last.open} | H: ₹${last.high} | L: ₹${last.low} | C: ₹${last.close} | Vol: ${last.volume}`;
-        }
-        renderSvgChart(candlesData);
-      } catch (e) {
-        console.warn("fetchCandles error:", e);
-      }
-    }
-
-    // EMA Calculation helper
     function calculateEMA(values, period) {
       if (!values || values.length < period) return [];
       const k = 2 / (period + 1);
@@ -726,89 +911,140 @@
       return emaArray;
     }
 
-    // Render SVG Candlestick Chart with EMA 9 & EMA 21
-    function renderSvgChart(candles) {
-      const svg = document.getElementById("chart-svg");
-      if (!candles || candles.length === 0) {
-        svg.innerHTML = `<text x="50%" y="50%" fill="#64748b" text-anchor="middle" font-size="12" font-family="monospace">Loading candlestick series...</text>`;
-        return;
-      }
+    async function fetchCandles() {
+      try {
+        const pinParam = currentOwnerPin ? `&pin=${encodeURIComponent(currentOwnerPin)}` : '';
+        const url = `${API_BASE}/api/market/candles?symbol=${encodeURIComponent(activeSymbol)}&interval=${activeTimeframe}${pinParam}`;
+        const headers = currentOwnerPin ? { 'X-Auth-Pin': currentOwnerPin } : {};
+        const res = await fetch(url, { headers });
+        if (!res.ok) return;
+        const data = await res.json();
+        const rawCandles = data.candles || data.data || [];
+        if (!rawCandles || rawCandles.length === 0) return;
 
-      const displayCandles = candles.slice(-55);
-      const width = svg.clientWidth || 700;
-      const height = svg.clientHeight || 340;
-      const padding = { top: 20, right: 60, bottom: 25, left: 10 };
-      const chartW = width - padding.left - padding.right;
-      const chartH = height - padding.top - padding.bottom;
+        // Sort strictly by ascending timestamp
+        const sorted = [...rawCandles].sort((a, b) => {
+          const ta = typeof a.time === 'number' ? a.time : (new Date(a.time || a.timestamp).getTime() / 1000);
+          const tb = typeof b.time === 'number' ? b.time : (new Date(b.time || b.timestamp).getTime() / 1000);
+          return ta - tb;
+        });
 
-      const minPrice = Math.min(...displayCandles.map(c => c.low)) * 0.998;
-      const maxPrice = Math.max(...displayCandles.map(c => c.high)) * 1.002;
-      const priceRange = maxPrice - minPrice || 1;
-
-      const getY = (val) => padding.top + chartH - ((val - minPrice) / priceRange) * chartH;
-      const candleW = Math.max(3, (chartW / displayCandles.length) * 0.7);
-      const step = chartW / displayCandles.length;
-
-      // Close prices for EMAs
-      const closes = displayCandles.map(c => c.close);
-      const ema9 = calculateEMA(closes, 9);
-      const ema21 = calculateEMA(closes, 21);
-
-      let svgElements = [];
-
-      // Grid Lines
-      for (let i = 0; i <= 4; i++) {
-        const y = padding.top + (chartH / 4) * i;
-        const p = maxPrice - (priceRange / 4) * i;
-        svgElements.push(`<line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="#1e293b" stroke-dasharray="3,3" stroke-width="1"/>`);
-        svgElements.push(`<text x="${width - padding.right + 8}" y="${y + 4}" fill="#64748b" font-size="10" font-family="monospace">₹${p.toFixed(1)}</text>`);
-      }
-
-      // Candlesticks
-      displayCandles.forEach((c, i) => {
-        const x = padding.left + i * step + step / 2;
-        const isUp = c.close >= c.open;
-        const color = isUp ? "#10b981" : "#f43f5e";
-        const yHigh = getY(c.high);
-        const yLow = getY(c.low);
-        const yOpen = getY(c.open);
-        const yClose = getY(c.close);
-        const yTop = Math.min(yOpen, yClose);
-        const barH = Math.max(2, Math.abs(yClose - yOpen));
-
-        // Wick
-        svgElements.push(`<line x1="${x}" y1="${yHigh}" x2="${x}" y2="${yLow}" stroke="${color}" stroke-width="1.2"/>`);
-        // Body
-        svgElements.push(`<rect x="${x - candleW / 2}" y="${yTop}" width="${candleW}" height="${barH}" fill="${color}" rx="1"/>`);
-      });
-
-      // EMA 9 Path
-      if (showEma9) {
-        let pathD = "";
-        for (let i = 8; i < displayCandles.length; i++) {
-          if (ema9[i]) {
-            const x = padding.left + i * step + step / 2;
-            const y = getY(ema9[i]);
-            pathD += (pathD === "" ? `M ${x} ${y}` : ` L ${x} ${y}`);
+        const unique = [];
+        const seenTimes = new Set();
+        for (const c of sorted) {
+          let t = typeof c.time === 'number' ? c.time : Math.floor(new Date(c.time || c.timestamp).getTime() / 1000);
+          if (isNaN(t) || t <= 0) continue;
+          if (!seenTimes.has(t)) {
+            seenTimes.add(t);
+            unique.push({
+              time: t,
+              open: parseFloat(c.open),
+              high: parseFloat(c.high),
+              low: parseFloat(c.low),
+              close: parseFloat(c.close),
+              volume: parseFloat(c.volume || 0),
+            });
           }
         }
-        if (pathD) svgElements.push(`<path d="${pathD}" fill="none" stroke="#22d3ee" stroke-width="1.8" opacity="0.85"/>`);
-      }
 
-      // EMA 21 Path
-      if (showEma21) {
-        let pathD = "";
-        for (let i = 20; i < displayCandles.length; i++) {
-          if (ema21[i]) {
-            const x = padding.left + i * step + step / 2;
-            const y = getY(ema21[i]);
-            pathD += (pathD === "" ? `M ${x} ${y}` : ` L ${x} ${y}`);
+        if (unique.length > 0) {
+          const loader = document.getElementById("chart-loader");
+          if (loader) loader.classList.add("hidden");
+
+          if (!tvChart) initTvChart();
+          if (candleSeries) candleSeries.setData(unique);
+          if (volumeSeries) {
+            volumeSeries.setData(unique.map(c => ({
+              time: c.time,
+              value: c.volume,
+              color: c.close >= c.open ? "rgba(16, 185, 129, 0.35)" : "rgba(244, 63, 94, 0.35)",
+            })));
           }
-        }
-        if (pathD) svgElements.push(`<path d="${pathD}" fill="none" stroke="#f59e0b" stroke-width="1.8" opacity="0.85"/>`);
-      }
 
-      svg.innerHTML = svgElements.join("");
+          const closes = unique.map(c => c.close);
+          const ema9Vals = calculateEMA(closes, 9);
+          const ema21Vals = calculateEMA(closes, 21);
+
+          if (ema9Series) {
+            if (showEma9) {
+              ema9Series.setData(unique.map((c, idx) => ({ time: c.time, value: ema9Vals[idx] || c.close })));
+            } else {
+              ema9Series.setData([]);
+            }
+          }
+
+          if (ema21Series) {
+            if (showEma21) {
+              ema21Series.setData(unique.map((c, idx) => ({ time: c.time, value: ema21Vals[idx] || c.close })));
+            } else {
+              ema21Series.setData([]);
+            }
+          }
+
+          if (vwapSeries) {
+            if (showVwap) {
+              let cumVol = 0;
+              let cumPV = 0;
+              const vwapData = unique.map(c => {
+                const typ = (c.high + c.low + c.close) / 3;
+                cumVol += c.volume || 1;
+                cumPV += typ * (c.volume || 1);
+                return { time: c.time, value: cumPV / cumVol };
+              });
+              vwapSeries.setData(vwapData);
+            } else {
+              vwapSeries.setData([]);
+            }
+          }
+
+          // Trade Markers
+          const rawMarkers = data.markers || [];
+          if (candleSeries && showMarkers && rawMarkers.length > 0) {
+            const validMarkers = rawMarkers.map(m => {
+              let mt = typeof m.time === 'number' ? m.time : Math.floor(new Date(m.time || m.timestamp).getTime() / 1000);
+              return {
+                time: mt,
+                position: m.position || "aboveBar",
+                color: m.color || "#10b981",
+                shape: m.shape || "arrowUp",
+                text: m.text || "Signal",
+              };
+            }).filter(m => seenTimes.has(m.time)).sort((a, b) => a.time - b.time);
+            try { candleSeries.setMarkers(validMarkers); } catch(err) {}
+          } else if (candleSeries) {
+            try { candleSeries.setMarkers([]); } catch(err) {}
+          }
+
+          const last = unique[unique.length - 1];
+          const ohlcEl = document.getElementById("ohlc-header");
+          if (ohlcEl) {
+            ohlcEl.innerText = `O: ₹${last.open.toFixed(2)} | H: ₹${last.high.toFixed(2)} | L: ₹${last.low.toFixed(2)} | C: ₹${last.close.toFixed(2)} | Vol: ${last.volume.toLocaleString()}`;
+          }
+          const ltpEl = document.getElementById("active-symbol-ltp");
+          if (ltpEl) ltpEl.innerText = `₹${last.close.toFixed(2)}`;
+        }
+      } catch (e) {
+        console.warn("fetchCandles error:", e);
+      }
+    }
+
+    function switchSymbol(sym) {
+      if (!sym) return;
+      activeSymbol = sym.toUpperCase();
+      
+      const sel = document.getElementById("chart-symbol-select");
+      if (sel) sel.value = activeSymbol;
+      
+      const orderSym = document.getElementById("order-symbol");
+      if (orderSym) orderSym.value = activeSymbol;
+
+      const loader = document.getElementById("chart-loader");
+      if (loader) loader.classList.remove("hidden");
+
+      fetchCandles();
+      fetchMacroData();
+      if (bottomTab === "orderflow") fetchOrderFlowData();
+      if (bottomTab === "fundamentals") fetchFundamentalsData();
     }
 
     // 3. Rapid Order Execution (Zone 3 Right)
@@ -820,11 +1056,11 @@
       if (side === "BUY") {
         bBuy.className = "py-2 rounded-lg bg-emerald-500 text-slate-950 shadow-md transition";
         bSell.className = "py-2 rounded-lg text-slate-400 hover:text-white transition";
-        bExec.className = "w-full py-3 rounded-xl font-mono font-black text-xs uppercase tracking-wider bg-emerald-500 text-slate-950 hover:bg-emerald-400 shadow-lg shadow-emerald-500/20 active:scale-[0.98] transition flex items-center justify-center gap-2";
+        bExec.className = "w-full py-3 rounded-xl font-mono font-black text-xs uppercase tracking-wider bg-emerald-500 text-slate-950 hover:bg-emerald-400 shadow-lg shadow-emerald-500/20 active:scale-[0.98] transition flex items-center justify-center gap-2 cursor-pointer";
       } else {
         bBuy.className = "py-2 rounded-lg text-slate-400 hover:text-white transition";
         bSell.className = "py-2 rounded-lg bg-rose-500 text-slate-950 shadow-md transition";
-        bExec.className = "w-full py-3 rounded-xl font-mono font-black text-xs uppercase tracking-wider bg-rose-500 text-slate-950 hover:bg-rose-400 shadow-lg shadow-rose-500/20 active:scale-[0.98] transition flex items-center justify-center gap-2";
+        bExec.className = "w-full py-3 rounded-xl font-mono font-black text-xs uppercase tracking-wider bg-rose-500 text-slate-950 hover:bg-rose-400 shadow-lg shadow-rose-500/20 active:scale-[0.98] transition flex items-center justify-center gap-2 cursor-pointer";
       }
     }
 
@@ -837,7 +1073,6 @@
           b.className = "py-1.5 rounded-lg border inst-btn bg-[#070a11] border-slate-800 text-slate-400 hover:text-white";
         }
       });
-      // Adjust lot size indicator
       const lotLabel = document.getElementById("order-lotsize-label");
       if (inst === "EQUITY") lotLabel.innerText = "Lot Size: 1";
       else if (activeSymbol === "NIFTY") lotLabel.innerText = "Lot Size: 25";
@@ -856,8 +1091,12 @@
       const sl = activeSide === "BUY" ? ltp * 0.99 : ltp * 1.01;
       const risk = Math.abs(ltp - sl);
       const tgt = activeSide === "BUY" ? ltp + (risk * 1.5) : ltp - (risk * 1.5);
+      const qty = parseInt(document.getElementById("order-qty").value) || 10;
+      const margin = (ltp * qty) * (activeInstrument === "EQUITY" ? 0.20 : 0.15);
+
       document.getElementById("order-sl-disp").innerText = `₹${sl.toFixed(2)}`;
       document.getElementById("order-tgt-disp").innerText = `₹${tgt.toFixed(2)}`;
+      document.getElementById("order-margin-disp").innerText = `₹${margin.toLocaleString('en-IN', {maximumFractionDigits: 0})}`;
     }
 
     async function submitQuickOrder() {
@@ -885,7 +1124,7 @@
         });
         const json = await res.json();
         if (res.ok) {
-          showToast("Market Order Executed! ⚡", `Placed ${activeSide} ${qty} shares of ${activeSymbol} @ ₹${ltp.toFixed(2)}`);
+          showToast("Market Order Executed!", `Placed ${activeSide} ${qty} shares of ${activeSymbol} @ ₹${ltp.toFixed(2)}`);
           fetchPositions();
           fetchState();
         } else {
@@ -896,10 +1135,10 @@
       }
     }
 
-    // 4. Bottom Grid: Scanner, Option Chain & Positions (Zone 4)
+    // 4. Bottom Grid: Multi-Asset Scanner & Institutional Suite (Zone 4)
     function switchBottomTab(tab) {
       bottomTab = tab;
-      const tabIds = ["tab-orb", "tab-bullflag", "tab-20d", "tab-oversold", "tab-optionchain", "tab-positions", "tab-backtest", "tab-journal", "tab-livearm", "tab-fiidii", "tab-orderflow", "tab-commodities", "tab-newsdesk"];
+      const tabIds = ["tab-orb", "tab-bullflag", "tab-20d", "tab-oversold", "tab-optionchain", "tab-positions", "tab-backtest", "tab-journal", "tab-livearm", "tab-fiidii", "tab-orderflow", "tab-commodities", "tab-newsdesk", "tab-fundamentals"];
       const activeMap = {
         "orb": "tab-orb",
         "bull_flag": "tab-bullflag",
@@ -914,6 +1153,7 @@
         "orderflow": "tab-orderflow",
         "commodities": "tab-commodities",
         "newsdesk": "tab-newsdesk",
+        "fundamentals": "tab-fundamentals",
       };
 
       tabIds.forEach(id => {
@@ -948,6 +1188,8 @@
           fetchCommoditiesData();
         } else if (tab === "newsdesk") {
           fetchNewsdeskData();
+        } else if (tab === "fundamentals") {
+          fetchFundamentalsData();
         } else {
           fetchScanner(tab);
         }
@@ -957,8 +1199,8 @@
     async function fetchScanner(strat = "orb") {
       try {
         const stratParam = strat === "20d" ? "20d_high" : strat;
-        const pinParam = ownerPin ? `&pin=${encodeURIComponent(ownerPin)}` : '';
-        const headers = ownerPin ? { 'X-Auth-Pin': ownerPin } : {};
+        const pinParam = currentOwnerPin ? `&pin=${encodeURIComponent(currentOwnerPin)}` : '';
+        const headers = currentOwnerPin ? { 'X-Auth-Pin': currentOwnerPin } : {};
         const res = await fetch(`${API_BASE}/api/trader/scanner?strategy=${stratParam}${pinParam}`, { headers });
         if (!res.ok) return;
         const data = await res.json();
@@ -969,125 +1211,7 @@
       }
     }
 
-    async function fetchOptionChainData() {
-      const symSelect = document.getElementById("oc-symbol-select");
-      const expSelect = document.getElementById("oc-expiry-select");
-      const sym = symSelect ? symSelect.value : "NIFTY";
-      const exp = expSelect ? expSelect.value : "nearest";
-
-      const tbody = document.getElementById("table-body");
-      if (tbody) {
-        tbody.innerHTML = `<tr><td colspan="9" class="text-center py-10 text-slate-400"><i data-lucide="loader" class="w-5 h-5 animate-spin mx-auto mb-2 text-amber-400"></i>Loading Live Option Chain for ${sym}...</td></tr>`;
-        lucide.createIcons();
-      }
-
-      try {
-        const res = await fetch(`${API_BASE}/api/option_chain?symbol=${encodeURIComponent(sym)}&expiry=${encodeURIComponent(exp)}`);
-        if (!res.ok) throw new Error("Failed to load option chain");
-        const oc = await res.json();
-
-        // Update expiry select options
-        if (expSelect && oc.available_expiries && oc.available_expiries.length > 0) {
-          const currentExp = oc.expiry || exp;
-          expSelect.innerHTML = oc.available_expiries.map(e => `<option value="${e}" ${e === currentExp ? 'selected' : ''}>${e}</option>`).join("");
-        }
-
-        // Update PCR & Spot Banner
-        const spotDisp = document.getElementById("oc-spot-disp");
-        const pcrBadge = document.getElementById("oc-pcr-badge");
-        const callOiDisp = document.getElementById("oc-call-oi-disp");
-        const putOiDisp = document.getElementById("oc-put-oi-disp");
-
-        if (spotDisp) spotDisp.innerText = `₹${(oc.underlying_spot || 0).toFixed(2)}`;
-        if (pcrBadge) {
-          const pcrVal = oc.pcr || 0;
-          pcrBadge.innerText = `${pcrVal.toFixed(2)} ${pcrVal >= 1.0 ? '🐂 BULLISH' : (pcrVal <= 0.8 ? '🐻 BEARISH' : '⚖️ NEUTRAL')}`;
-          pcrBadge.className = `px-2 py-0.5 rounded text-[11px] font-bold border ${pcrVal >= 1.0 ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : (pcrVal <= 0.8 ? 'bg-rose-500/20 text-rose-400 border-rose-500/40' : 'bg-amber-500/20 text-amber-400 border-amber-500/40')}`;
-        }
-        if (callOiDisp) callOiDisp.innerText = (oc.total_call_oi || 0).toLocaleString();
-        if (putOiDisp) putOiDisp.innerText = (oc.total_put_oi || 0).toLocaleString();
-
-        renderOptionChainTable(oc);
-      } catch (e) {
-        if (tbody) tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-rose-400">Could not fetch Option Chain: ${e.message}</td></tr>`;
-      }
-    }
-
-    function renderOptionChainTable(oc) {
-      const thead = document.getElementById("table-head-row");
-      thead.innerHTML = `
-        <th class="py-2.5 px-3 text-rose-300">Call OI</th>
-        <th class="py-2.5 px-3 text-rose-300">Call Chg OI</th>
-        <th class="py-2.5 px-3 text-rose-300 font-bold">Call LTP (₹)</th>
-        <th class="py-2.5 px-3 text-center bg-slate-800 text-amber-300 font-black">STRIKE (₹)</th>
-        <th class="py-2.5 px-3 text-emerald-300 font-bold">Put LTP (₹)</th>
-        <th class="py-2.5 px-3 text-emerald-300">Put Chg OI</th>
-        <th class="py-2.5 px-3 text-emerald-300">Put OI</th>
-        <th class="py-2.5 px-3 text-right">Quick Action</th>
-      `;
-
-      const tbody = document.getElementById("table-body");
-      const strikes = oc.strikes || [];
-      if (strikes.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" class="text-center py-8 text-slate-500">No option strikes available for selected expiry.</td></tr>`;
-        return;
-      }
-
-      const spot = oc.underlying_spot || 0;
-      // Find ATM strike closest to spot
-      let closestDiff = Infinity;
-      let atmStrike = 0;
-      strikes.forEach(s => {
-        const d = Math.abs(s.strike - spot);
-        if (d < closestDiff) {
-          closestDiff = d;
-          atmStrike = s.strike;
-        }
-      });
-
-      tbody.innerHTML = strikes.map(s => {
-        const isATM = s.strike === atmStrike;
-        const ce = s.ce || {};
-        const pe = s.pe || {};
-
-        return `<tr class="hover:bg-slate-850 transition ${isATM ? 'bg-amber-950/30 border-y border-amber-500/50' : ''}">
-          <td class="py-2 px-3 font-mono text-slate-400 text-xs">${(ce.oi || 0).toLocaleString()}</td>
-          <td class="py-2 px-3 font-mono text-xs ${(ce.change_oi || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${(ce.change_oi || 0) >= 0 ? '+' : ''}${(ce.change_oi || 0).toLocaleString()}</td>
-          <td class="py-2 px-3 font-mono font-bold text-rose-300 cursor-pointer hover:underline text-xs" onclick="selectOptionForOrder('${oc.symbol}', ${s.strike}, 'CALL', ${ce.ltp || 0})">
-            <div>₹${(ce.ltp || 0).toFixed(2)}</div>
-            <div class="text-[10px] font-bold ${(ce.pct_change || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${(ce.pct_change || 0) >= 0 ? '+' : ''}${(ce.pct_change || 0).toFixed(1)}%</div>
-          </td>
-          <td class="py-2 px-3 font-mono font-black text-center ${isATM ? 'bg-amber-500/20 text-amber-300 ring-1 ring-amber-400/50 rounded' : 'bg-slate-800/60 text-slate-100'} text-xs">
-            ₹${s.strike} ${isATM ? '<span class="text-[9px] px-1 rounded bg-amber-400 text-slate-950 font-bold ml-1">ATM</span>' : ''}
-          </td>
-          <td class="py-2 px-3 font-mono font-bold text-emerald-300 cursor-pointer hover:underline text-xs" onclick="selectOptionForOrder('${oc.symbol}', ${s.strike}, 'PUT', ${pe.ltp || 0})">
-            <div>₹${(pe.ltp || 0).toFixed(2)}</div>
-            <div class="text-[10px] font-bold ${(pe.pct_change || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${(pe.pct_change || 0) >= 0 ? '+' : ''}${(pe.pct_change || 0).toFixed(1)}%</div>
-          </td>
-          <td class="py-2 px-3 font-mono text-xs ${(pe.change_oi || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${(pe.change_oi || 0) >= 0 ? '+' : ''}${(pe.change_oi || 0).toLocaleString()}</td>
-          <td class="py-2 px-3 font-mono text-slate-400 text-xs">${(pe.oi || 0).toLocaleString()}</td>
-          <td class="py-2 px-3 text-right">
-            <button onclick="selectOptionForOrder('${oc.symbol}', ${s.strike}, 'CALL', ${ce.ltp || 0})" class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500 hover:text-white mr-1">CE</button>
-            <button onclick="selectOptionForOrder('${oc.symbol}', ${s.strike}, 'PUT', ${pe.ltp || 0})" class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500 hover:text-slate-950">PE</button>
-          </td>
-        </tr>`;
-      }).join("");
-      lucide.createIcons();
-    }
-
-    function selectOptionForOrder(sym, strike, type, ltp) {
-      setInstrument(type);
-      activeSymbol = sym;
-      const title = document.getElementById("active-symbol-title");
-      if (title) title.innerText = `${sym} ${strike} ${type}`;
-      const ltpDisp = document.getElementById("active-symbol-ltp");
-      if (ltpDisp) ltpDisp.innerText = `₹${ltp.toFixed(2)}`;
-      updateOrderCalculations(ltp);
-      showToast("Option Selected", `Loaded ${sym} ${strike} ${type} @ ₹${ltp.toFixed(2)} into Order Execution card.`);
-      window.scrollTo({ top: 300, behavior: 'smooth' });
-    }
-
-    function renderScannerTable(items) {
+    function renderScannerTable(data) {
       const thead = document.getElementById("table-head-row");
       thead.innerHTML = `
         <th class="py-2.5 px-3">Symbol</th>
@@ -1100,301 +1224,262 @@
         <th class="py-2.5 px-3">Expiry</th>
         <th class="py-2.5 px-3 text-right">Action</th>
       `;
-
       const tbody = document.getElementById("table-body");
-      if (!items || items.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-slate-500">No scanner results.</td></tr>`;
+      if (!data || data.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-slate-500">No active breakout triggers on current scan. Scanners refresh continuously.</td></tr>`;
         return;
       }
-
-      tbody.innerHTML = items.map(s => {
-        const isTriggered = s.status === "triggered";
-        const isInProgress = s.status === "breakout_in_progress";
-        const statusBadge = isTriggered
-          ? `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500 text-slate-950 animate-pulse">TRIGGERED 🚀</span>`
-          : (isInProgress
-            ? `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-800">IN PROGRESS ⏳</span>`
-            : `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-400">WAITING</span>`);
-
-        const isUp = s.percent_change >= 0;
-        return `<tr class="hover:bg-slate-850 cursor-pointer transition ${activeSymbol === s.symbol ? 'bg-slate-800/40' : ''}" onclick="switchSymbol('${s.symbol}')">
-          <td class="py-2.5 px-3 font-bold text-slate-100 flex items-center gap-1.5">
-            <span>${s.symbol}</span>
-            ${activeSymbol === s.symbol ? '<span class="text-[9px] px-1 rounded bg-emerald-400 text-slate-950 font-bold">ACTIVE</span>' : ''}
-          </td>
-          <td class="py-2.5 px-3 font-bold text-slate-100">₹${s.current_price.toFixed(2)}</td>
-          <td class="py-2.5 px-3 font-bold ${isUp ? 'text-emerald-400' : 'text-rose-400'}">${isUp ? '+' : ''}${s.percent_change.toFixed(2)}%</td>
-          <td class="py-2.5 px-3">${statusBadge}</td>
-          <td class="py-2.5 px-3 text-slate-400 text-[11px]">₹${s.opening_range_high ? s.opening_range_high.toFixed(1) : '--'} / ₹${s.opening_range_low ? s.opening_range_low.toFixed(1) : '--'}</td>
-          <td class="py-2.5 px-3 text-rose-400">₹${s.stop_loss ? s.stop_loss.toFixed(2) : '--'}</td>
-          <td class="py-2.5 px-3 text-emerald-400">₹${s.target_1 ? s.target_1.toFixed(2) : '--'}</td>
-          <td class="py-2.5 px-3 text-slate-400 text-[11px]">${s.expiry || '--'}</td>
-          <td class="py-2.5 px-3 text-right">
-            <button onclick="event.stopPropagation(); rapidCopyTrade('${s.symbol}', ${s.current_price}, ${s.stop_loss}, ${s.target_1})" class="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500 hover:text-slate-950 transition font-mono flex items-center gap-1 ml-auto">
-              <i data-lucide="zap" class="w-3 h-3"></i> Copy
-            </button>
-          </td>
-        </tr>`;
+      tbody.innerHTML = data.slice(0, 30).map(s => {
+        const isUp = (s.change_pct || 0) >= 0;
+        return `
+          <tr class="hover:bg-slate-800/40 font-mono text-xs cursor-pointer" onclick="switchSymbol('${s.symbol}')">
+            <td class="py-2.5 px-3 font-bold text-slate-100 flex items-center gap-1.5">
+              <span>${s.symbol}</span>
+              ${s.triggered ? '<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>' : ''}
+            </td>
+            <td class="py-2.5 px-3 font-bold text-slate-200">₹${(s.ltp || s.current_price || 0).toFixed(2)}</td>
+            <td class="py-2.5 px-3 font-bold ${isUp ? 'text-emerald-400' : 'text-rose-400'}">${isUp ? '+' : ''}${(s.change_pct || 0).toFixed(2)}%</td>
+            <td class="py-2.5 px-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold ${s.triggered ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-slate-800 text-slate-400'}">${s.status || 'Forming'}</span></td>
+            <td class="py-2.5 px-3 text-slate-400">${(s.range_high || 0).toFixed(1)} / ${(s.range_low || 0).toFixed(1)}</td>
+            <td class="py-2.5 px-3 text-rose-400">₹${(s.stop_loss || 0).toFixed(2)}</td>
+            <td class="py-2.5 px-3 text-emerald-400">₹${(s.target_1 || 0).toFixed(2)}</td>
+            <td class="py-2.5 px-3 text-slate-400">${s.expiry || 'CURRENT'}</td>
+            <td class="py-2.5 px-3 text-right">
+              <button onclick="event.stopPropagation(); executeScannerTrade('${s.symbol}', ${(s.ltp || 0)})" class="px-2.5 py-1 rounded bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500 hover:text-black font-bold transition">Trade</button>
+            </td>
+          </tr>
+        `;
       }).join("");
-      lucide.createIcons();
     }
 
-    async function rapidCopyTrade(sym, entry, sl, t1) {
+    function executeScannerTrade(sym, ltp) {
+      switchSymbol(sym);
+      submitQuickOrder();
+    }
+
+    function filterScanner() {
+      const q = (document.getElementById("scanner-filter").value || "").toUpperCase().trim();
+      if (!q) { renderScannerTable(scannerData); return; }
+      const filtered = scannerData.filter(s => (s.symbol || "").toUpperCase().includes(q));
+      renderScannerTable(filtered);
+    }
+
+    // 4a. Option Chain & PCR (india-s-best-option-hub)
+    async function fetchOptionChainData() {
+      const sym = document.getElementById("oc-symbol-select").value || "NIFTY";
+      const exp = document.getElementById("oc-expiry-select").value || "nearest";
+
+      const tbody = document.getElementById("table-body");
+      tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-slate-500"><i data-lucide="loader" class="w-5 h-5 animate-spin mx-auto mb-2 text-amber-400"></i>Loading Option Chain & Greeks for ${sym}...</td></tr>`;
+      lucide.createIcons();
+
       try {
-        const res = await fetch(`${API_BASE}/api/copy-trade/execute`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            symbol: sym,
-            side: "BUY",
-            entry_price: entry,
-            stop_loss: sl,
-            target_1: t1,
-          }),
-        });
+        const pinParam = currentOwnerPin ? `&pin=${encodeURIComponent(currentOwnerPin)}` : '';
+        const res = await fetch(`${API_BASE}/api/option_chain?symbol=${sym}&expiry=${exp}${pinParam}`);
         const data = await res.json();
-        if (res.ok) {
-          showToast("Trade Copied! ⚡", `Copied ${data.trade.quantity} shares of ${sym} @ ₹${entry}`);
-          fetchPositions();
-          fetchState();
-        } else {
-          showToast("Error", data.detail || "Copy trade failed.", true);
-        }
+        
+        document.getElementById("oc-spot-disp").innerText = `₹${(data.spot_price || 0).toFixed(2)}`;
+        document.getElementById("oc-pcr-badge").innerText = (data.pcr || 0).toFixed(2);
+        document.getElementById("oc-call-oi-disp").innerText = (data.total_call_oi || 0).toLocaleString();
+        document.getElementById("oc-put-oi-disp").innerText = (data.total_put_oi || 0).toLocaleString();
+
+        const thead = document.getElementById("table-head-row");
+        thead.innerHTML = `
+          <th class="py-2.5 px-3 text-cyan-400">Call OI</th>
+          <th class="py-2.5 px-3 text-cyan-400">Call LTP</th>
+          <th class="py-2.5 px-3 text-slate-400">Delta / IV</th>
+          <th class="py-2.5 px-3 text-center bg-slate-800 text-amber-400 font-bold">Strike</th>
+          <th class="py-2.5 px-3 text-slate-400">Delta / IV</th>
+          <th class="py-2.5 px-3 text-rose-400">Put LTP</th>
+          <th class="py-2.5 px-3 text-rose-400">Put OI</th>
+          <th class="py-2.5 px-3 text-right">Action</th>
+        `;
+
+        const strikes = data.strikes || [];
+        tbody.innerHTML = strikes.slice(0, 25).map(s => `
+          <tr class="hover:bg-slate-800/40 font-mono text-xs">
+            <td class="py-2 px-3 text-cyan-300 font-bold">${(s.call_oi || 0).toLocaleString()}</td>
+            <td class="py-2 px-3 text-emerald-400 font-bold">₹${(s.call_ltp || 0).toFixed(2)}</td>
+            <td class="py-2 px-3 text-slate-400 text-[11px]">Δ ${(s.call_delta || 0.5).toFixed(2)} | ${(s.call_iv || 14.2).toFixed(1)}%</td>
+            <td class="py-2 px-3 text-center bg-slate-900 font-black text-amber-400">${s.strike_price}</td>
+            <td class="py-2 px-3 text-slate-400 text-[11px]">Δ ${(s.put_delta || -0.5).toFixed(2)} | ${(s.put_iv || 14.5).toFixed(1)}%</td>
+            <td class="py-2 px-3 text-rose-400 font-bold">₹${(s.put_ltp || 0).toFixed(2)}</td>
+            <td class="py-2 px-3 text-rose-300 font-bold">${(s.put_oi || 0).toLocaleString()}</td>
+            <td class="py-2 px-3 text-right">
+              <button onclick="switchSymbol('${sym}'); setInstrument('CE');" class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold mr-1">Buy CE</button>
+              <button onclick="switchSymbol('${sym}'); setInstrument('PE');" class="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 text-[10px] font-bold">Buy PE</button>
+            </td>
+          </tr>
+        `).join("");
       } catch (e) {
-        showToast("Error", "Could not reach Copy Trading engine.", true);
+        tbody.innerHTML = `<tr><td colspan="8" class="text-center py-8 text-rose-400">Failed to load Option Chain: ${e.message}</td></tr>`;
       }
     }
 
-    // Active Positions Table View
+    // 4b. Active Positions & Virtual OMS
     async function fetchPositions() {
       try {
-        const res = await fetch(`${API_BASE}/api/paper/positions?status=OPEN`);
+        const res = await fetch(`${API_BASE}/api/paper/positions`);
         if (!res.ok) return;
         const data = await res.json();
         positionsData = data.positions || [];
         document.getElementById("pos-count-badge").innerText = positionsData.length;
         if (bottomTab === "positions") renderPositionsTable();
-      } catch (e) {
-        console.warn("fetchPositions error:", e);
-      }
+      } catch (e) {}
     }
 
     function renderPositionsTable() {
       const thead = document.getElementById("table-head-row");
       thead.innerHTML = `
+        <th class="py-2.5 px-3">Position ID</th>
         <th class="py-2.5 px-3">Symbol</th>
         <th class="py-2.5 px-3">Side</th>
         <th class="py-2.5 px-3">Quantity</th>
         <th class="py-2.5 px-3">Entry Price</th>
         <th class="py-2.5 px-3">Live LTP</th>
-        <th class="py-2.5 px-3">Stop Loss</th>
-        <th class="py-2.5 px-3">Target</th>
         <th class="py-2.5 px-3">Unrealized P&L</th>
+        <th class="py-2.5 px-3">Stop / Target</th>
         <th class="py-2.5 px-3 text-right">Action</th>
       `;
-
       const tbody = document.getElementById("table-body");
-      if (!positionsData || positionsData.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-slate-500">No active positions open.</td></tr>`;
+      if (positionsData.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-slate-500">No active positions currently open in OMS. Place an order to see live tracking.</td></tr>`;
         return;
       }
-
       tbody.innerHTML = positionsData.map(p => {
-        const isUp = p.pnl >= 0;
-        return `<tr class="hover:bg-slate-850 font-mono text-xs">
-          <td class="py-2.5 px-3 font-bold text-slate-100">${p.symbol}</td>
-          <td class="py-2.5 px-3"><span class="px-1.5 py-0.2 rounded font-bold ${p.side === 'BUY' ? 'bg-emerald-950 text-emerald-400' : 'bg-rose-950 text-rose-400'}">${p.side}</span></td>
-          <td class="py-2.5 px-3">${p.quantity} shares</td>
-          <td class="py-2.5 px-3">₹${p.entry_price}</td>
-          <td class="py-2.5 px-3 font-bold text-slate-100">₹${p.current_ltp || p.entry_price}</td>
-          <td class="py-2.5 px-3 text-rose-400">₹${p.stop_loss}</td>
-          <td class="py-2.5 px-3 text-emerald-400">₹${p.target_1}</td>
-          <td class="py-2.5 px-3 font-bold ${isUp ? 'text-emerald-400' : 'text-rose-400'}">${isUp ? '+' : ''}₹${p.pnl.toFixed(2)} (${p.pnl_percent.toFixed(2)}%)</td>
-          <td class="py-2.5 px-3 text-right">
-            <button onclick="closeTrade('${p.id}')" class="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 transition border border-rose-500/40">
-              Square Off
-            </button>
-          </td>
-        </tr>`;
+        const isPos = (p.unrealized_pnl || 0) >= 0;
+        return `
+          <tr class="hover:bg-slate-800/40 font-mono text-xs">
+            <td class="py-2.5 px-3 text-slate-500">${p.id || '--'}</td>
+            <td class="py-2.5 px-3 font-bold text-slate-100">${p.symbol}</td>
+            <td class="py-2.5 px-3"><span class="px-1.5 py-0.2 rounded font-bold ${p.side === 'BUY' ? 'bg-emerald-950 text-emerald-400' : 'bg-rose-950 text-rose-400'}">${p.side}</span></td>
+            <td class="py-2.5 px-3 text-slate-300">${p.quantity}</td>
+            <td class="py-2.5 px-3 text-slate-300">₹${(p.entry_price || 0).toFixed(2)}</td>
+            <td class="py-2.5 px-3 text-slate-100 font-bold">₹${(p.current_price || p.entry_price || 0).toFixed(2)}</td>
+            <td class="py-2.5 px-3 font-bold ${isPos ? 'text-emerald-400' : 'text-rose-400'}">${isPos ? '+' : ''}₹${(p.unrealized_pnl || 0).toFixed(2)}</td>
+            <td class="py-2.5 px-3 text-slate-400">${(p.stop_loss || 0).toFixed(1)} / ${(p.target_1 || 0).toFixed(1)}</td>
+            <td class="py-2.5 px-3 text-right">
+              <button onclick="closeSinglePosition('${p.id}')" class="px-2.5 py-1 rounded bg-rose-500/20 text-rose-300 hover:bg-rose-500 hover:text-white font-bold transition">Close</button>
+            </td>
+          </tr>
+        `;
       }).join("");
-      lucide.createIcons();
     }
 
-    async function closeTrade(tradeId) {
+    async function closeSinglePosition(posId) {
       try {
-        const res = await fetch(`${API_BASE}/api/paper/close-position`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ position_id: tradeId }),
-        });
-        if (res.ok) {
-          showToast("Position Closed", "Squared off trade successfully.");
-          fetchPositions();
-          fetchState();
-        }
+        await fetch(`${API_BASE}/api/paper/close/${posId}`, { method: "POST" });
+        showToast("Closed", `Position ${posId} squared off.`);
+        fetchPositions();
+        fetchState();
       } catch (e) {
         showToast("Error", "Could not close position.", true);
       }
     }
 
     async function flattenAllPositions() {
-      if (!confirm("Square off ALL open positions immediately?")) return;
+      if (!confirm("Confirm squaring off ALL open positions immediately?")) return;
       try {
-        const res = await fetch(`${API_BASE}/api/paper/close-all`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reason: "DESK_FLATTEN" }),
-        });
-        const data = await res.json();
-        showToast("Flatten All Complete", data.message || "All positions closed.");
+        await fetch(`${API_BASE}/api/paper/flatten`, { method: "POST" });
+        showToast("Flattened", "All open positions squared off at market price.");
         fetchPositions();
         fetchState();
       } catch (e) {
-        showToast("Error", "Failed to flatten positions.", true);
+        showToast("Error", "Flatten command failed.", true);
       }
     }
 
-    function filterScanner() {
-      const q = document.getElementById("scanner-filter").value.trim().toUpperCase();
-      if (!q) {
-        renderScannerTable(scannerData);
-      } else {
-        renderScannerTable(scannerData.filter(s => s.symbol.includes(q)));
-      }
-    }
-
-    // 4b. Quant Algo Backtester (4-Mode Comparison Matrix)
+    // 4c. Quant Backtest 4-Mode Matrix & Friction Engine
     function renderBacktestPanel() {
       const thead = document.getElementById("table-head-row");
       thead.innerHTML = `
         <th class="py-2.5 px-3">Execution Mode</th>
         <th class="py-2.5 px-3">Win Rate</th>
-        <th class="py-2.5 px-3">Gross P&L</th>
+        <th class="py-2.5 px-3">Trades (W/L)</th>
+        <th class="py-2.5 px-3 text-emerald-400">Gross P&L</th>
         <th class="py-2.5 px-3 text-amber-400">2026 Friction</th>
-        <th class="py-2.5 px-3">Net P&L</th>
+        <th class="py-2.5 px-3">Net Realized P&L</th>
         <th class="py-2.5 px-3">Profit Factor</th>
-        <th class="py-2.5 px-3">Expectancy</th>
-        <th class="py-2.5 px-3">Whipsaw Trades</th>
+        <th class="py-2.5 px-3">Max DD</th>
         <th class="py-2.5 px-3 text-right">Action</th>
       `;
-
       const tbody = document.getElementById("table-body");
-      tbody.innerHTML = `
-        <tr>
-          <td colspan="9" class="p-4 bg-[#070a11]">
-            <div class="flex flex-wrap items-center justify-between gap-3 p-3 bg-[#0d1322] border border-purple-500/30 rounded-xl mb-4 font-mono text-xs">
-              <div class="flex flex-wrap items-center gap-3">
-                <span class="text-purple-400 font-bold">Strategy:</span>
-                <select id="bt-strat-select" class="bg-[#070a11] border border-slate-700 rounded-lg px-2.5 py-1 text-slate-100 font-bold focus:outline-none focus:border-purple-400">
-                  <option value="ORB_BREAKOUT">ORB 15m Breakout</option>
-                  <option value="VWAP_BOUNCE">VWAP Alpha Bounce</option>
-                  <option value="SUPERTREND_FLIP">Supertrend (10,3) Flip</option>
-                  <option value="EMA_CROSS">EMA 9/21 Dynamic Cross</option>
-                  <option value="MEAN_REVERSION">Mean Reversion Bands</option>
-                </select>
-                <span class="text-slate-400 font-bold">Symbol:</span>
-                <input type="text" id="bt-symbol-input" value="${activeSymbol}" class="bg-[#070a11] border border-slate-700 rounded-lg px-2 py-1 text-slate-100 font-bold w-24 uppercase focus:outline-none focus:border-purple-400" />
-                <span class="text-slate-400 font-bold">TF:</span>
-                <select id="bt-tf-select" class="bg-[#070a11] border border-slate-700 rounded-lg px-2 py-1 text-slate-100 font-bold focus:outline-none">
-                  <option value="5m" selected>5m</option>
-                  <option value="15m">15m</option>
-                  <option value="3m">3m</option>
-                  <option value="1m">1m</option>
-                </select>
-              </div>
-              <button onclick="runBacktestFromUI()" class="px-4 py-2 rounded-lg bg-gradient-to-r from-purple-500 to-indigo-500 text-white font-bold hover:brightness-110 transition shadow-lg shadow-purple-500/20 flex items-center gap-1.5 cursor-pointer">
-                <i data-lucide="play" class="w-3.5 h-3.5"></i> Run 4-Mode Backtest
-              </button>
-            </div>
-            <div id="bt-results-container" class="text-center py-6 text-slate-500 font-mono text-xs">
-              Select strategy and click "Run 4-Mode Backtest" to evaluate ATM Buy, Deep ITM Buy, ATM Sell, and Futures side-by-side with 2026 Indian brokerage & friction.
-            </div>
-          </td>
-        </tr>
-      `;
-      lucide.createIcons();
-    }
-
-    async function runBacktestFromUI() {
-      const strat = document.getElementById("bt-strat-select").value;
-      const sym = document.getElementById("bt-symbol-input").value.trim().toUpperCase() || "NIFTY";
-      const tf = document.getElementById("bt-tf-select").value || "5m";
-      const container = document.getElementById("bt-results-container");
-
-      container.innerHTML = `<i data-lucide="loader" class="w-6 h-6 animate-spin mx-auto mb-2 text-purple-400"></i>Running 4-Mode Backtest & 2026 Friction calculation for ${sym} (${strat})...`;
+      tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-slate-500"><i data-lucide="loader" class="w-5 h-5 animate-spin mx-auto mb-2 text-purple-400"></i>Simulating 4-Mode Strategy Matrix across historical ticks...</td></tr>`;
       lucide.createIcons();
 
-      try {
-        const res = await fetch(`${API_BASE}/api/algo/backtest`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ symbol: sym, strategy: strat, timeframe: tf }),
-        });
-        if (!res.ok) throw new Error("Backtest request failed");
-        const data = await res.json();
-        const comp = data.mode_comparison || {};
-        const bestMode = data.best_execution_mode || "ATM_BUY";
+      fetch(`${API_BASE}/api/algo/backtest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          symbol: activeSymbol,
+          strategy: "ORB_BREAKOUT",
+          timeframe: activeTimeframe,
+          sl_pct: 0.01,
+          target_rr: 2.0,
+          signal_limit: "MAX_2",
+        })
+      }).then(r => r.json()).then(data => {
+        const mc = data.mode_comparison || {};
+        const modes = [
+          { key: "ATM_BUY", name: "ATM BUY (Long CE/PE)", desc: "High delta sensitivity, theta friction" },
+          { key: "DEEP_ITM_BUY", name: "DEEP ITM BUY (0.7+ Delta)", desc: "Low extrinsic decay, equity-like curve" },
+          { key: "ATM_SELL", name: "ATM SELL (Short Credit)", desc: "High win-rate theta decay, gap tail risk" },
+          { key: "FUTURES", name: "FUTURES (Linear 1.0 Delta)", desc: "Pure price action, no volatility decay" },
+        ];
 
-        let html = `
-          <div class="mb-3 p-3 bg-purple-950/30 border border-purple-500/40 rounded-xl flex items-center justify-between text-xs">
-            <span class="text-slate-200">Optimal Mode: <b class="text-emerald-400">${bestMode}</b> | Total Trades: <b class="text-slate-100">${data.total_trades || 0}</b></span>
-            <span class="text-cyan-400">Net Expectancy: ₹${(data.expectancy_per_trade || 0).toFixed(2)}/trade</span>
-          </div>
-          <table class="w-full text-left text-xs font-mono">
-            <tbody class="divide-y divide-slate-800">
-        `;
-
-        const modes = ["ATM_BUY", "DEEP_ITM_BUY", "ATM_SELL", "FUTURES"];
-        modes.forEach(m => {
-          const row = comp[m] || {};
-          const isBest = m === bestMode;
-          const isNetPos = (row.net_pnl || 0) >= 0;
-          html += `
-            <tr class="hover:bg-slate-800/40 ${isBest ? 'bg-purple-950/20' : ''}">
-              <td class="py-2.5 px-3 font-bold ${isBest ? 'text-purple-300' : 'text-slate-300'}">${m} ${isBest ? '<span class="text-[9px] bg-purple-500/20 border border-purple-500/40 px-1 py-0.2 rounded ml-1 text-purple-300">BEST</span>' : ''}</td>
-              <td class="py-2.5 px-3 text-cyan-300 font-bold">${(row.win_rate || 0).toFixed(1)}%</td>
-              <td class="py-2.5 px-3 text-slate-200">₹${(row.gross_pnl || 0).toFixed(2)}</td>
-              <td class="py-2.5 px-3 text-amber-400 font-bold">₹${(row.total_friction || 0).toFixed(2)}</td>
-              <td class="py-2.5 px-3 font-bold ${isNetPos ? 'text-emerald-400' : 'text-rose-400'}">${isNetPos ? '+' : ''}₹${(row.net_pnl || 0).toFixed(2)}</td>
-              <td class="py-2.5 px-3 text-slate-300">${(row.profit_factor || 0).toFixed(2)}</td>
-              <td class="py-2.5 px-3 text-slate-300">₹${(row.expectancy || 0).toFixed(2)}</td>
-              <td class="py-2.5 px-3 text-rose-400">${row.whipsaw_count || 0}</td>
-              <td class="py-2.5 px-3 text-right">
-                <button onclick="deployStrategyFromBT('${strat}', '${sym}', '${m}')" class="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 border border-emerald-500/40">
-                  Deploy
-                </button>
+        tbody.innerHTML = modes.map(m => {
+          const res = mc[m.key] || { win_rate: 0, total_trades: 0, wins: 0, losses: 0, gross_pnl: 0, total_friction: 0, net_pnl: 0, profit_factor: 1, max_drawdown: 0 };
+          const isNetPos = res.net_pnl >= 0;
+          return `
+            <tr class="hover:bg-slate-800/40 font-mono text-xs">
+              <td class="py-3 px-3">
+                <div class="font-bold text-slate-100">${m.name}</div>
+                <div class="text-[10px] text-slate-500">${m.desc}</div>
+              </td>
+              <td class="py-3 px-3 font-bold ${res.win_rate >= 50 ? 'text-emerald-400' : 'text-rose-400'}">${(res.win_rate || 0).toFixed(1)}%</td>
+              <td class="py-3 px-3 text-slate-300">${res.total_trades} (${res.wins}W / ${res.losses}L)</td>
+              <td class="py-3 px-3 text-slate-200">₹${(res.gross_pnl || 0).toFixed(2)}</td>
+              <td class="py-3 px-3 text-amber-400">₹${(res.total_friction || 0).toFixed(2)}</td>
+              <td class="py-3 px-3 font-black ${isNetPos ? 'text-emerald-400' : 'text-rose-400'}">${isNetPos ? '+' : ''}₹${(res.net_pnl || 0).toFixed(2)}</td>
+              <td class="py-3 px-3 text-slate-200">${(res.profit_factor || 1.0).toFixed(2)}</td>
+              <td class="py-3 px-3 text-rose-400">-${(res.max_drawdown || 0).toFixed(1)}%</td>
+              <td class="py-3 px-3 text-right">
+                <button onclick="deployAlgoStrategy('${m.key}')" class="px-3 py-1 rounded bg-purple-500/20 text-purple-300 hover:bg-purple-500 hover:text-white font-bold transition">Deploy Mode</button>
               </td>
             </tr>
           `;
-        });
-        html += `</tbody></table>`;
-        container.innerHTML = html;
-      } catch (e) {
-        container.innerHTML = `<span class="text-rose-400">Backtest error: ${e.message}</span>`;
-      }
+        }).join("");
+      }).catch(err => {
+        tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-rose-400">Backtest failed: ${err.message}</td></tr>`;
+      });
     }
 
-    async function deployStrategyFromBT(strategy, symbol, mode) {
+    async function deployAlgoStrategy(mode) {
       try {
         const res = await fetch(`${API_BASE}/api/algo/deploy`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ strategy: strategy, symbol: symbol, mode: "PAPER" }),
+          body: JSON.stringify({
+            symbol: activeSymbol,
+            strategy: "ORB_BREAKOUT",
+            mode: "PAPER",
+            execution_mode: mode,
+          })
         });
         const data = await res.json();
-        showToast("Deployed", `Strategy ${strategy} on ${symbol} deployed in PAPER mode.`);
+        showToast("Deployed!", `Strategy running in ${mode} on ${activeSymbol}.`);
       } catch (e) {
-        showToast("Error", "Could not deploy strategy.", true);
+        showToast("Error", "Failed to deploy strategy.", true);
       }
     }
 
-    // 4c. Automated Trade Journal
+    // 4d. Trade Journal (itemized with 2026 friction)
     async function fetchTradeJournal() {
       const thead = document.getElementById("table-head-row");
       thead.innerHTML = `
-        <th class="py-2.5 px-3">Time</th>
-        <th class="py-2.5 px-3">Symbol / Contract</th>
-        <th class="py-2.5 px-3">Strategy</th>
+        <th class="py-2.5 px-3">Timestamp</th>
+        <th class="py-2.5 px-3">Symbol</th>
+        <th class="py-2.5 px-3">Strategy Tag</th>
         <th class="py-2.5 px-3">Mode</th>
         <th class="py-2.5 px-3">Qty</th>
         <th class="py-2.5 px-3">Gross P&L</th>
@@ -1402,14 +1487,12 @@
         <th class="py-2.5 px-3">Net P&L</th>
         <th class="py-2.5 px-3 text-right">Status</th>
       `;
-
       const tbody = document.getElementById("table-body");
       tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-slate-500"><i data-lucide="loader" class="w-5 h-5 animate-spin mx-auto mb-2 text-cyan-400"></i>Loading Trade Journal...</td></tr>`;
       lucide.createIcons();
 
       try {
         const res = await fetch(`${API_BASE}/api/journal`);
-        if (!res.ok) throw new Error("Failed to load trade journal");
         const data = await res.json();
         const trades = data.trades || [];
 
@@ -1434,13 +1517,12 @@
             </tr>
           `;
         }).join("");
-        lucide.createIcons();
       } catch (e) {
         tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-rose-400">Failed to load journal: ${e.message}</td></tr>`;
       }
     }
 
-    // 4d. Live Safety Lock (Double Lock UI)
+    // 4e. Live Safety Lock UI
     async function fetchLiveArmStatus() {
       const thead = document.getElementById("table-head-row");
       thead.innerHTML = `
@@ -1450,7 +1532,6 @@
         <th class="py-2.5 px-3">Authorization Requirement</th>
         <th class="py-2.5 px-3 text-right">Controls</th>
       `;
-
       const tbody = document.getElementById("table-body");
       try {
         const res = await fetch(`${API_BASE}/api/algo/status`);
@@ -1497,7 +1578,7 @@
 
     async function armLiveUI() {
       try {
-        const res = await fetch(`${API_BASE}/api/algo/arm-live`, {
+        await fetch(`${API_BASE}/api/algo/arm-live`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ duration_minutes: 60 }),
@@ -1529,7 +1610,7 @@
       }
     }
 
-    // 4e. FII / DII Institutional Flows (Ported from fii-dii-data)
+    // 4f. FII / DII Institutional Flows (fii-dii-data)
     async function fetchFiiDiiData() {
       const thead = document.getElementById("table-head-row");
       thead.innerHTML = `
@@ -1579,7 +1660,7 @@
       }
     }
 
-    // 4f. Order Flow & Cumulative Volume Delta (CVD) (Ported from order-flow)
+    // 4g. Order Flow (CVD) (order-flow)
     async function fetchOrderFlowData() {
       const thead = document.getElementById("table-head-row");
       thead.innerHTML = `
@@ -1594,7 +1675,7 @@
         <th class="py-2.5 px-3 text-right">Absorption & Order Flow Signal</th>
       `;
       const tbody = document.getElementById("table-body");
-      tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-slate-500"><i data-lucide="loader" class="w-5 h-5 animate-spin mx-auto mb-2 text-amber-400"></i>Loading Order Flow & CVD...</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-slate-500"><i data-lucide="loader" class="w-5 h-5 animate-spin mx-auto mb-2 text-amber-400"></i>Loading Order Flow & CVD for ${activeSymbol}...</td></tr>`;
       lucide.createIcons();
 
       try {
@@ -1624,7 +1705,7 @@
       }
     }
 
-    // 4g. MCX & Global Commodities (Ported from commodity-price-tracker)
+    // 4h. MCX & Global Commodities (commodity-price-tracker)
     async function fetchCommoditiesData() {
       const thead = document.getElementById("table-head-row");
       thead.innerHTML = `
@@ -1666,7 +1747,7 @@
       }
     }
 
-    // 4h. Newsdesk & Catalysts (Ported from Newsdesk)
+    // 4i. Financial Newsdesk (Newsdesk)
     async function fetchNewsdeskData() {
       const thead = document.getElementById("table-head-row");
       thead.innerHTML = `
@@ -1707,7 +1788,105 @@
       }
     }
 
-    // 5. WebSocket Connection to Render (Protected with Owner PIN)
+    // 4j. Fundamental Scanner (DCF Fair Value)
+    async function fetchFundamentalsData() {
+      const thead = document.getElementById("table-head-row");
+      thead.innerHTML = `
+        <th class="py-2.5 px-3">Financial Metric</th>
+        <th class="py-2.5 px-3">Reported Value</th>
+        <th class="py-2.5 px-3">Institutional Benchmark</th>
+        <th class="py-2.5 px-3">Verdict / Status</th>
+      `;
+      const tbody = document.getElementById("table-body");
+      tbody.innerHTML = `<tr><td colspan="4" class="text-center py-8 text-slate-500"><i data-lucide="loader" class="w-5 h-5 animate-spin mx-auto mb-2 text-teal-400"></i>Loading DCF Valuation & Fundamentals for ${activeSymbol}...</td></tr>`;
+      lucide.createIcons();
+
+      try {
+        const res = await fetch(`${API_BASE}/api/fundamentals?symbol=${encodeURIComponent(activeSymbol)}`);
+        const d = await res.json();
+        const rows = [
+          { metric: "Valuation P/E Ratio", val: `${d.pe_ratio}x`, bm: "Sector Avg: 24.5x", verdict: d.pe_ratio < 24.5 ? "Attractive" : "Premium" },
+          { metric: "Price-to-Book (P/B)", val: `${d.pb_ratio}x`, bm: "Benchmark: < 3.5x", verdict: d.pb_ratio < 3.5 ? "Fair" : "Elevated" },
+          { metric: "Return on Capital (ROCE)", val: `${d.roce_pct}%`, bm: "Institutional Cutoff: > 15%", verdict: d.roce_pct >= 15 ? "High Capital Efficiency" : "Moderate" },
+          { metric: "Return on Equity (ROE)", val: `${d.roe_pct}%`, bm: "Institutional Cutoff: > 15%", verdict: d.roe_pct >= 15 ? "Strong Compounding" : "Average" },
+          { metric: "Debt / Equity Ratio", val: `${d.debt_to_equity}`, bm: "Solvency Ceiling: < 0.50", verdict: d.debt_to_equity <= 0.5 ? "Pristine Balance Sheet" : "Leveraged" },
+          { metric: "DCF Intrinsic Fair Value", val: `₹${d.dcf_fair_value}`, bm: `Current CMP: ₹${d.cmp}`, verdict: `${d.valuation_status} (Margin of Safety: +${d.margin_of_safety_pct}%)` },
+        ];
+
+        tbody.innerHTML = rows.map(r => `
+          <tr class="hover:bg-slate-800/40 font-mono text-xs">
+            <td class="py-2.5 px-3 font-bold text-slate-200">${r.metric}</td>
+            <td class="py-2.5 px-3 font-black text-cyan-300">${r.val}</td>
+            <td class="py-2.5 px-3 text-slate-400">${r.bm}</td>
+            <td class="py-2.5 px-3 font-bold ${r.verdict.includes('Attractive') || r.verdict.includes('High') || r.verdict.includes('Strong') || r.verdict.includes('Pristine') || r.verdict.includes('UNDERVALUED') ? 'text-emerald-400' : 'text-slate-300'}">${r.verdict}</td>
+          </tr>
+        `).join("");
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="4" class="text-center py-8 text-rose-400">Failed to load fundamentals: ${e.message}</td></tr>`;
+      }
+    }
+
+    // Institutional Macro Radar Top Bar Data Fetcher
+    async function fetchMacroData() {
+      try {
+        const [fiiRes, comRes, techRes] = await Promise.all([
+          fetch(`${API_BASE}/api/fii-dii`),
+          fetch(`${API_BASE}/api/commodities`),
+          fetch(`${API_BASE}/api/technical-summary?symbol=${encodeURIComponent(activeSymbol)}`)
+        ]);
+        if (fiiRes.ok) {
+          const fii = await fiiRes.json();
+          const fiiNet = fii.cash_market.fii_net;
+          const diiNet = fii.cash_market.dii_net;
+          const ratio = fii.derivatives_market.fii_long_short_ratio;
+          const fiiEl = document.getElementById("macro-fii-cash");
+          if (fiiEl) {
+            fiiEl.innerText = `${fiiNet >= 0 ? '+' : ''}₹${fiiNet.toFixed(1)} Cr`;
+            fiiEl.className = fiiNet >= 0 ? "text-emerald-400 font-bold" : "text-rose-400 font-bold";
+          }
+          const diiEl = document.getElementById("macro-dii-cash");
+          if (diiEl) {
+            diiEl.innerText = `${diiNet >= 0 ? '+' : ''}₹${diiNet.toFixed(1)} Cr`;
+            diiEl.className = diiNet >= 0 ? "text-emerald-400 font-bold" : "text-rose-400 font-bold";
+          }
+          const ratioEl = document.getElementById("macro-fii-ratio");
+          if (ratioEl) ratioEl.innerText = ratio.toString();
+        }
+        if (comRes.ok) {
+          const com = await comRes.json();
+          const crude = (com.commodities || []).find(c => c.symbol === 'CRUDEOIL');
+          if (crude) {
+            const el = document.getElementById("macro-crude");
+            if (el) el.innerText = `₹${crude.price.toLocaleString()}`;
+            const chg = document.getElementById("macro-crude-chg");
+            if (chg) {
+              chg.innerText = `${crude.pct_change >= 0 ? '+' : ''}${crude.pct_change.toFixed(1)}%`;
+              chg.className = crude.pct_change >= 0 ? "text-[10px] text-emerald-400 font-bold" : "text-[10px] text-rose-400 font-bold";
+            }
+          }
+          const gold = (com.commodities || []).find(c => c.symbol === 'GOLD');
+          if (gold) {
+            const el = document.getElementById("macro-gold");
+            if (el) el.innerText = `₹${gold.price.toLocaleString()}`;
+            const chg = document.getElementById("macro-gold-chg");
+            if (chg) {
+              chg.innerText = `${gold.pct_change >= 0 ? '+' : ''}${gold.pct_change.toFixed(1)}%`;
+              chg.className = gold.pct_change >= 0 ? "text-[10px] text-emerald-400 font-bold" : "text-[10px] text-rose-400 font-bold";
+            }
+          }
+        }
+        if (techRes.ok) {
+          const tech = await techRes.json();
+          const ratingEl = document.getElementById("macro-tech-rating");
+          if (ratingEl) {
+            ratingEl.innerText = tech.overall_consensus || "BUY";
+            ratingEl.className = (tech.overall_consensus || "").includes("BUY") ? "text-emerald-400 font-bold" : "text-amber-400 font-bold";
+          }
+        }
+      } catch (err) {}
+    }
+
+    // 5. Bandwidth-Optimized WebSocket Connection to Render (Protected with Owner PIN)
     function initWebSocket() {
       if (!currentOwnerPin) return;
       try {
@@ -1716,12 +1895,62 @@
         window.activeWebSocket = ws;
         ws.onopen = () => {
           document.getElementById("ws-dot").className = "w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse-fast";
-          document.getElementById("ws-text").innerText = "Live WebSocket (Angel One)";
+          document.getElementById("ws-text").innerText = "Live Angel One Feed";
         };
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            if (data.type === "tick_broadcast" || data.type === "tick") {
+            if (data.type === "delta") {
+              ticksStreamed++;
+              document.getElementById("ticks-count").innerText = `${ticksStreamed.toLocaleString()} ticks`;
+              
+              if (data.indices) {
+                if (data.indices.NIFTY) {
+                  const n = data.indices.NIFTY;
+                  document.getElementById("card-nifty-ltp").innerText = `₹${n.ltp.toLocaleString('en-IN', {minimumFractionDigits: 2})}`;
+                  document.getElementById("card-nifty-chg").innerHTML = `<span class="${n.change >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${n.change >= 0 ? '+' : ''}₹${n.change.toFixed(2)} (${n.change_pct >= 0 ? '+' : ''}${n.change_pct.toFixed(2)}%)</span>`;
+                }
+                if (data.indices.BANKNIFTY) {
+                  const b = data.indices.BANKNIFTY;
+                  document.getElementById("card-banknifty-ltp").innerText = `₹${b.ltp.toLocaleString('en-IN', {minimumFractionDigits: 2})}`;
+                  document.getElementById("card-banknifty-chg").innerHTML = `<span class="${b.change >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${b.change >= 0 ? '+' : ''}₹${b.change.toFixed(2)} (${b.change_pct >= 0 ? '+' : ''}${b.change_pct.toFixed(2)}%)</span>`;
+                }
+                if (data.indices.SENSEX) {
+                  const s = data.indices.SENSEX;
+                  document.getElementById("card-sensex-ltp").innerText = `₹${s.ltp.toLocaleString('en-IN', {minimumFractionDigits: 2})}`;
+                  document.getElementById("card-sensex-chg").innerHTML = `<span class="${s.change >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${s.change >= 0 ? '+' : ''}₹${s.change.toFixed(2)} (${s.change_pct >= 0 ? '+' : ''}${s.change_pct.toFixed(2)}%)</span>`;
+                }
+                if (data.indices.INDIA_VIX) {
+                  const v = data.indices.INDIA_VIX;
+                  document.getElementById("card-vix-ltp").innerText = `${v.ltp.toFixed(2)}`;
+                  document.getElementById("card-vix-chg").innerHTML = `<span class="${v.change <= 0 ? 'text-emerald-400' : 'text-rose-400'}">${v.change >= 0 ? '+' : ''}${v.change.toFixed(2)} (${v.change_pct >= 0 ? '+' : ''}${v.change_pct.toFixed(2)}%)</span>`;
+                }
+              }
+
+              // Update active symbol if present in heavyweights or indices
+              const symData = (data.heavyweights && data.heavyweights[activeSymbol]) || (data.indices && data.indices[activeSymbol]);
+              if (symData) {
+                const ltpEl = document.getElementById("active-symbol-ltp");
+                if (ltpEl) ltpEl.innerText = `₹${symData.ltp.toFixed(2)}`;
+                const chgEl = document.getElementById("active-symbol-chg");
+                if (chgEl) {
+                  chgEl.innerText = `(${symData.change_pct >= 0 ? '+' : ''}${symData.change_pct.toFixed(2)}%)`;
+                  chgEl.className = symData.change_pct >= 0 ? "text-xs font-bold text-emerald-400 font-mono" : "text-xs font-bold text-rose-400 font-mono";
+                }
+                if (candleSeries && symData.ltp) {
+                  const nowSec = Math.floor(Date.now() / 1000);
+                  try {
+                    candleSeries.update({
+                      time: nowSec,
+                      open: symData.ltp,
+                      high: symData.ltp,
+                      low: symData.ltp,
+                      close: symData.ltp
+                    });
+                  } catch (e) {}
+                }
+              }
+            } else if (data.type === "tick_broadcast" || data.type === "tick") {
               ticksStreamed = data.ticks_streamed || (ticksStreamed + 1);
               document.getElementById("ticks-count").innerText = `${ticksStreamed.toLocaleString()} ticks`;
             }
@@ -1740,18 +1969,21 @@
     function startDeskFeeds() {
       if (deskFeedsStarted) return;
       deskFeedsStarted = true;
+      initTvChart();
       fetchState();
       fetchCandles();
+      fetchMacroData();
       fetchScanner("orb");
       fetchPositions();
       initWebSocket();
 
-      deskIntervals.push(setInterval(fetchState, 2000));
-      deskIntervals.push(setInterval(fetchPositions, 2000));
+      deskIntervals.push(setInterval(fetchState, 3000));
+      deskIntervals.push(setInterval(fetchPositions, 3000));
       deskIntervals.push(setInterval(fetchCandles, 5000));
+      deskIntervals.push(setInterval(fetchMacroData, 15000));
       deskIntervals.push(setInterval(() => {
-        if (bottomTab !== "positions") fetchScanner(bottomTab);
-      }, 4000));
+        if (["orb", "bull_flag", "20d", "oversold"].includes(bottomTab)) fetchScanner(bottomTab);
+      }, 5000));
     }
 
     // Init Engine with Owner Authentication Check

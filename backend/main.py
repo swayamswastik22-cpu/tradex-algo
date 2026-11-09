@@ -1309,12 +1309,17 @@ if os.path.exists(TERMINAL_HTML_PATH):
 @app.api_route("/terminal", methods=["GET", "HEAD"], response_class=HTMLResponse, tags=["Owner Portal"])
 async def owner_portal_page():
     """Private Owner Portal with dedicated PIN unlock section for authorized trading desk access."""
-    global TERMINAL_HTML_CONTENT
-    if not TERMINAL_HTML_CONTENT and os.path.exists(TERMINAL_HTML_PATH):
+    html_content = ""
+    if os.path.exists(TERMINAL_HTML_PATH):
         with open(TERMINAL_HTML_PATH, "r", encoding="utf-8") as f:
-            TERMINAL_HTML_CONTENT = f.read()
-    if TERMINAL_HTML_CONTENT:
-        return HTMLResponse(content=TERMINAL_HTML_CONTENT)
+            html_content = f.read()
+    if html_content:
+        response = HTMLResponse(content=html_content)
+        # Prevent browser or Cloudflare from caching stale HTML
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
     return HTMLResponse("<h1>Owner portal template not found</h1>", status_code=404)
 
 
