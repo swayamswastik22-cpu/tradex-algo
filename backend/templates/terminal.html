@@ -343,6 +343,22 @@
             <i data-lucide="shield-alert" class="w-3.5 h-3.5"></i>
             <span>Live Safety Lock</span>
           </button>
+          <button id="tab-fiidii" onclick="switchBottomTab('fiidii')" class="px-3 py-1.5 rounded-lg bg-[#070a11] text-emerald-400 hover:text-white border border-emerald-500/30 transition flex items-center gap-1.5 font-bold">
+            <i data-lucide="bar-chart-2" class="w-3.5 h-3.5"></i>
+            <span>FII / DII Flows</span>
+          </button>
+          <button id="tab-orderflow" onclick="switchBottomTab('orderflow')" class="px-3 py-1.5 rounded-lg bg-[#070a11] text-amber-400 hover:text-white border border-amber-500/30 transition flex items-center gap-1.5 font-bold">
+            <i data-lucide="activity" class="w-3.5 h-3.5"></i>
+            <span>Order Flow (CVD)</span>
+          </button>
+          <button id="tab-commodities" onclick="switchBottomTab('commodities')" class="px-3 py-1.5 rounded-lg bg-[#070a11] text-yellow-400 hover:text-white border border-yellow-500/30 transition flex items-center gap-1.5 font-bold">
+            <i data-lucide="coins" class="w-3.5 h-3.5"></i>
+            <span>Commodities</span>
+          </button>
+          <button id="tab-newsdesk" onclick="switchBottomTab('newsdesk')" class="px-3 py-1.5 rounded-lg bg-[#070a11] text-blue-400 hover:text-white border border-blue-500/30 transition flex items-center gap-1.5 font-bold">
+            <i data-lucide="newspaper" class="w-3.5 h-3.5"></i>
+            <span>Newsdesk</span>
+          </button>
         </div>
 
         <div class="flex items-center gap-2 font-mono text-xs">
@@ -883,7 +899,7 @@
     // 4. Bottom Grid: Scanner, Option Chain & Positions (Zone 4)
     function switchBottomTab(tab) {
       bottomTab = tab;
-      const tabIds = ["tab-orb", "tab-bullflag", "tab-20d", "tab-oversold", "tab-optionchain", "tab-positions", "tab-backtest", "tab-journal", "tab-livearm"];
+      const tabIds = ["tab-orb", "tab-bullflag", "tab-20d", "tab-oversold", "tab-optionchain", "tab-positions", "tab-backtest", "tab-journal", "tab-livearm", "tab-fiidii", "tab-orderflow", "tab-commodities", "tab-newsdesk"];
       const activeMap = {
         "orb": "tab-orb",
         "bull_flag": "tab-bullflag",
@@ -894,6 +910,10 @@
         "backtest": "tab-backtest",
         "journal": "tab-journal",
         "livearm": "tab-livearm",
+        "fiidii": "tab-fiidii",
+        "orderflow": "tab-orderflow",
+        "commodities": "tab-commodities",
+        "newsdesk": "tab-newsdesk",
       };
 
       tabIds.forEach(id => {
@@ -920,6 +940,14 @@
           fetchTradeJournal();
         } else if (tab === "livearm") {
           fetchLiveArmStatus();
+        } else if (tab === "fiidii") {
+          fetchFiiDiiData();
+        } else if (tab === "orderflow") {
+          fetchOrderFlowData();
+        } else if (tab === "commodities") {
+          fetchCommoditiesData();
+        } else if (tab === "newsdesk") {
+          fetchNewsdeskData();
         } else {
           fetchScanner(tab);
         }
@@ -1498,6 +1526,184 @@
         fetchLiveArmStatus();
       } catch (e) {
         showToast("Error", "Square off command failed.", true);
+      }
+    }
+
+    // 4e. FII / DII Institutional Flows (Ported from fii-dii-data)
+    async function fetchFiiDiiData() {
+      const thead = document.getElementById("table-head-row");
+      thead.innerHTML = `
+        <th class="py-2.5 px-3">Date</th>
+        <th class="py-2.5 px-3">FII Cash Net (₹ Cr)</th>
+        <th class="py-2.5 px-3">DII Cash Net (₹ Cr)</th>
+        <th class="py-2.5 px-3">Net Institutional</th>
+        <th class="py-2.5 px-3">FII Long/Short Ratio</th>
+        <th class="py-2.5 px-3">Institutional PCR</th>
+        <th class="py-2.5 px-3 text-right">Streak & Divergence Signal</th>
+      `;
+      const tbody = document.getElementById("table-body");
+      tbody.innerHTML = `<tr><td colspan="7" class="text-center py-8 text-slate-500"><i data-lucide="loader" class="w-5 h-5 animate-spin mx-auto mb-2 text-emerald-400"></i>Loading FII & DII Flows...</td></tr>`;
+      lucide.createIcons();
+
+      try {
+        const res = await fetch(`${API_BASE}/api/fii-dii`);
+        const data = await res.json();
+        const cm = data.cash_market;
+        const dm = data.derivatives_market;
+        const sa = data.streak_agent;
+        const h5 = data.history_5d || [];
+
+        tbody.innerHTML = `
+          <tr class="font-mono text-xs bg-slate-900/40">
+            <td class="py-3 px-3 font-bold text-amber-400">TODAY (${data.date})</td>
+            <td class="py-3 px-3 font-bold ${cm.fii_net >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${cm.fii_net >= 0 ? '+' : ''}₹${cm.fii_net.toFixed(2)} Cr</td>
+            <td class="py-3 px-3 font-bold ${cm.dii_net >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${cm.dii_net >= 0 ? '+' : ''}₹${cm.dii_net.toFixed(2)} Cr</td>
+            <td class="py-3 px-3 font-bold text-slate-100">₹${cm.net_institutional_flow.toFixed(2)} Cr</td>
+            <td class="py-3 px-3"><span class="px-2 py-0.5 rounded font-bold bg-cyan-950 text-cyan-300">${dm.fii_long_short_ratio}</span> <span class="text-[10px] text-slate-400">(${dm.ratio_interpretation})</span></td>
+            <td class="py-3 px-3 text-emerald-300 font-bold">${dm.pcr_institutional}</td>
+            <td class="py-3 px-3 text-right"><span class="px-2 py-0.5 rounded font-bold bg-emerald-950 text-emerald-400 border border-emerald-800">${sa.divergence_signal}</span></td>
+          </tr>
+        ` + h5.map(h => `
+          <tr class="hover:bg-slate-800/40 font-mono text-xs">
+            <td class="py-2.5 px-3 text-slate-400">${h.date}</td>
+            <td class="py-2.5 px-3 font-bold ${h.fii_cash >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${h.fii_cash >= 0 ? '+' : ''}₹${h.fii_cash.toFixed(1)} Cr</td>
+            <td class="py-2.5 px-3 font-bold ${h.dii_cash >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${h.dii_cash >= 0 ? '+' : ''}₹${h.dii_cash.toFixed(1)} Cr</td>
+            <td class="py-2.5 px-3 text-slate-300">₹${(h.fii_cash + h.dii_cash).toFixed(1)} Cr</td>
+            <td class="py-2.5 px-3 text-cyan-400 font-mono">${h.ratio}</td>
+            <td class="py-2.5 px-3 text-slate-400">--</td>
+            <td class="py-2.5 px-3 text-right text-slate-400 text-xs">Historical Session</td>
+          </tr>
+        `).join("");
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="7" class="text-center py-8 text-rose-400">Failed to load FII/DII data: ${e.message}</td></tr>`;
+      }
+    }
+
+    // 4f. Order Flow & Cumulative Volume Delta (CVD) (Ported from order-flow)
+    async function fetchOrderFlowData() {
+      const thead = document.getElementById("table-head-row");
+      thead.innerHTML = `
+        <th class="py-2.5 px-3">Bar Time (5m)</th>
+        <th class="py-2.5 px-3">Symbol</th>
+        <th class="py-2.5 px-3">Total Volume</th>
+        <th class="py-2.5 px-3 text-emerald-400">Buy Vol</th>
+        <th class="py-2.5 px-3 text-rose-400">Sell Vol</th>
+        <th class="py-2.5 px-3">Delta (Buy - Sell)</th>
+        <th class="py-2.5 px-3 text-amber-400">CVD (Cumulative)</th>
+        <th class="py-2.5 px-3">Point of Control (POC)</th>
+        <th class="py-2.5 px-3 text-right">Absorption & Order Flow Signal</th>
+      `;
+      const tbody = document.getElementById("table-body");
+      tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-slate-500"><i data-lucide="loader" class="w-5 h-5 animate-spin mx-auto mb-2 text-amber-400"></i>Loading Order Flow & CVD...</td></tr>`;
+      lucide.createIcons();
+
+      try {
+        const res = await fetch(`${API_BASE}/api/order-flow?symbol=${encodeURIComponent(activeSymbol)}`);
+        const data = await res.json();
+        const bars = data.bars || [];
+
+        tbody.innerHTML = bars.slice(-15).reverse().map(b => {
+          const isDeltaPos = b.delta >= 0;
+          const isCvdPos = b.cvd >= 0;
+          return `
+            <tr class="hover:bg-slate-800/40 font-mono text-xs">
+              <td class="py-2.5 px-3 text-slate-400">${b.time_str}</td>
+              <td class="py-2.5 px-3 font-bold text-slate-100">${data.symbol}</td>
+              <td class="py-2.5 px-3 text-slate-300">${b.volume.toLocaleString()}</td>
+              <td class="py-2.5 px-3 text-emerald-400">${b.buy_volume.toLocaleString()}</td>
+              <td class="py-2.5 px-3 text-rose-400">${b.sell_volume.toLocaleString()}</td>
+              <td class="py-2.5 px-3 font-bold ${isDeltaPos ? 'text-emerald-400' : 'text-rose-400'}">${isDeltaPos ? '+' : ''}${b.delta.toLocaleString()}</td>
+              <td class="py-2.5 px-3 font-bold ${isCvdPos ? 'text-amber-300' : 'text-purple-300'}">${isCvdPos ? '+' : ''}${b.cvd.toLocaleString()}</td>
+              <td class="py-2.5 px-3 font-bold text-cyan-300">₹${b.poc.toFixed(2)}</td>
+              <td class="py-2.5 px-3 text-right">${b.absorption ? `<span class="px-2 py-0.5 rounded font-bold text-[10px] bg-amber-950 text-amber-400 border border-amber-800">${b.absorption}</span>` : `<span class="text-slate-500">Normal Flow</span>`}</td>
+            </tr>
+          `;
+        }).join("");
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-rose-400">Failed to load order flow: ${e.message}</td></tr>`;
+      }
+    }
+
+    // 4g. MCX & Global Commodities (Ported from commodity-price-tracker)
+    async function fetchCommoditiesData() {
+      const thead = document.getElementById("table-head-row");
+      thead.innerHTML = `
+        <th class="py-2.5 px-3">Commodity</th>
+        <th class="py-2.5 px-3">Market Price</th>
+        <th class="py-2.5 px-3">Unit</th>
+        <th class="py-2.5 px-3">Net Change</th>
+        <th class="py-2.5 px-3">% Change</th>
+        <th class="py-2.5 px-3">Day High</th>
+        <th class="py-2.5 px-3">Day Low</th>
+        <th class="py-2.5 px-3 text-right">Macro & INR Impact</th>
+      `;
+      const tbody = document.getElementById("table-body");
+      tbody.innerHTML = `<tr><td colspan="8" class="text-center py-8 text-slate-500"><i data-lucide="loader" class="w-5 h-5 animate-spin mx-auto mb-2 text-yellow-400"></i>Loading MCX Commodities...</td></tr>`;
+      lucide.createIcons();
+
+      try {
+        const res = await fetch(`${API_BASE}/api/commodities`);
+        const data = await res.json();
+        const items = data.commodities || [];
+
+        tbody.innerHTML = items.map(c => {
+          const isUp = c.change >= 0;
+          return `
+            <tr class="hover:bg-slate-800/40 font-mono text-xs">
+              <td class="py-2.5 px-3 font-bold text-yellow-400">${c.name}</td>
+              <td class="py-2.5 px-3 font-bold text-slate-100">${c.price.toLocaleString()}</td>
+              <td class="py-2.5 px-3 text-slate-400">${c.unit}</td>
+              <td class="py-2.5 px-3 font-bold ${isUp ? 'text-emerald-400' : 'text-rose-400'}">${isUp ? '+' : ''}${c.change.toFixed(2)}</td>
+              <td class="py-2.5 px-3 font-bold ${isUp ? 'text-emerald-400' : 'text-rose-400'}">${isUp ? '+' : ''}${c.pct_change.toFixed(2)}%</td>
+              <td class="py-2.5 px-3 text-slate-300">${c.high.toLocaleString()}</td>
+              <td class="py-2.5 px-3 text-slate-300">${c.low.toLocaleString()}</td>
+              <td class="py-2.5 px-3 text-right text-slate-400">${c.symbol === 'CRUDEOIL' ? '<span class="text-rose-400">Inflation / Margin Headwind</span>' : (c.symbol === 'GOLD' ? '<span class="text-amber-400">Safe-Haven Hedging</span>' : '<span class="text-slate-500">Steady</span>')}</td>
+            </tr>
+          `;
+        }).join("");
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="8" class="text-center py-8 text-rose-400">Failed to load commodities: ${e.message}</td></tr>`;
+      }
+    }
+
+    // 4h. Newsdesk & Catalysts (Ported from Newsdesk)
+    async function fetchNewsdeskData() {
+      const thead = document.getElementById("table-head-row");
+      thead.innerHTML = `
+        <th class="py-2.5 px-3">Time</th>
+        <th class="py-2.5 px-3">Category</th>
+        <th class="py-2.5 px-3">Headline & Catalyst Summary</th>
+        <th class="py-2.5 px-3">Affected Sectors / Tickers</th>
+        <th class="py-2.5 px-3">Impact</th>
+        <th class="py-2.5 px-3 text-right">Sentiment Score</th>
+      `;
+      const tbody = document.getElementById("table-body");
+      tbody.innerHTML = `<tr><td colspan="6" class="text-center py-8 text-slate-500"><i data-lucide="loader" class="w-5 h-5 animate-spin mx-auto mb-2 text-blue-400"></i>Loading Newsdesk...</td></tr>`;
+      lucide.createIcons();
+
+      try {
+        const res = await fetch(`${API_BASE}/api/newsdesk`);
+        const data = await res.json();
+        const items = data.headlines || [];
+
+        tbody.innerHTML = items.map(n => {
+          const isBullish = n.impact === 'BULLISH';
+          return `
+            <tr class="hover:bg-slate-800/40 font-mono text-xs">
+              <td class="py-2.5 px-3 text-slate-400">${n.time}</td>
+              <td class="py-2.5 px-3"><span class="px-2 py-0.5 rounded font-bold uppercase text-[10px] bg-slate-800 text-slate-300">${n.category}</span></td>
+              <td class="py-2.5 px-3">
+                <div class="font-bold text-slate-100">${n.headline}</div>
+                <div class="text-[11px] text-slate-400 mt-0.5">${n.summary}</div>
+              </td>
+              <td class="py-2.5 px-3 text-cyan-300">${n.affected_sectors.join(", ")}</td>
+              <td class="py-2.5 px-3"><span class="px-2 py-0.5 rounded font-bold text-[10px] ${isBullish ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-slate-800 text-slate-300'}">${n.impact}</span></td>
+              <td class="py-2.5 px-3 text-right font-bold ${n.sentiment_score >= 0.5 ? 'text-emerald-400' : 'text-slate-300'}">+${(n.sentiment_score * 100).toFixed(0)}%</td>
+            </tr>
+          `;
+        }).join("");
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="6" class="text-center py-8 text-rose-400">Failed to load newsdesk: ${e.message}</td></tr>`;
       }
     }
 
